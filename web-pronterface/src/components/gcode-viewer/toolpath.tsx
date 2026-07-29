@@ -18,9 +18,9 @@ export interface SceneLayout {
 }
 
 export interface ToolpathData {
-  matrices: Float32Array;
-  layers: Uint32Array;
-  commands: Uint32Array;
+  matrices: Float32Array<ArrayBufferLike>;
+  layers: Uint32Array<ArrayBufferLike>;
+  commands: Uint32Array<ArrayBufferLike>;
   count: number;
 }
 
@@ -189,26 +189,26 @@ export async function buildToolpathData(
 
     start.set(
       segment.start.x -
-        layout.centerX,
+      layout.centerX,
 
       segment.start.z -
-        layout.minZ +
-        verticalOffset,
+      layout.minZ +
+      verticalOffset,
 
       layout.centerY -
-        segment.start.y,
+      segment.start.y,
     );
 
     end.set(
       segment.end.x -
-        layout.centerX,
+      layout.centerX,
 
       segment.end.z -
-        layout.minZ +
-        verticalOffset,
+      layout.minZ +
+      verticalOffset,
 
       layout.centerY -
-        segment.end.y,
+      segment.end.y,
     );
 
     direction.subVectors(
@@ -248,7 +248,7 @@ export async function buildToolpathData(
     scale.set(
       1,
       segmentLength +
-        SEGMENT_OVERLAP,
+      SEGMENT_OVERLAP,
       1,
     );
 
@@ -273,18 +273,18 @@ export async function buildToolpathData(
 
     if (
       outputIndex %
-        BUILD_CHUNK_SIZE ===
-        0 ||
+      BUILD_CHUNK_SIZE ===
+      0 ||
       outputIndex === extrusionCount
     ) {
       const percent =
         extrusionCount === 0
           ? 100
           : Math.round(
-              (outputIndex /
-                extrusionCount) *
-                100,
-            );
+            (outputIndex /
+              extrusionCount) *
+            100,
+          );
 
       if (
         percent !==

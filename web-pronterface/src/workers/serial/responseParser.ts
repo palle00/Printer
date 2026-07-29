@@ -1,0 +1,151 @@
+import type {
+  PrinterPosition,
+} from "../../types/printer";
+
+export interface ParsedTemperature {
+  timestamp: number;
+
+  hotend?: number;
+  targetHotend?: number;
+
+  bed?: number;
+  targetBed?: number;
+}
+
+export interface ParsedPrinterResponse {
+  acknowledge: boolean;
+
+  error: Error | null;
+
+  temperature:
+    | ParsedTemperature
+    | null;
+
+  position:
+    | PrinterPosition
+    | null;
+}
+
+function parseAxisValue(
+  text: string,
+  axis: "X" | "Y" | "Z" | "E",
+): number | null {
+  const match = text.match(
+    new RegExp(
+      `(?:^|\\s)${axis}:\\s*([-+]?\\d*\\.?\\d+)`,
+      "i",
+    ),
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const value = Number(match[1]);
+
+  return Number.isFinite(value)
+    ? value
+    : null;
+}
+
+function parseTemperature(
+  line: string,
+): ParsedTemperature | null {
+  const hotendMatch = line.match(
+    /(?:^|\s)T:([-+]?\d*\.?\d+)\s*\/\s*([-+]?\d*\.?\d+)/i,
+  );
+
+  const bedMatch = line.match(
+    /(?:^|\s)B:([-+]?\d*\.?\d+)\s*\/\s*([-+]?\d*\.?\d+)/i,
+  );
+
+  if (!hotendMatch && !bedMatch) {
+    return null;
+  }
+
+  return {
+    timestamp: Date.now(),
+
+    hotend: hotendMatch
+      ? Number(hotendMatch[1])
+      : undefined,
+
+    targetHotend: hotendMatch
+      ? Number(hotendMatch[2])
+      : undefined,
+
+    bed: bedMatch
+      ? Number(bedMatch[1])
+      : undefined,
+
+    targetBed: bedMatch
+      ? Number(bedMatch[2])
+      : undefined,
+  };
+}
+
+function parsePosition(
+  line: string,
+  currentExtrusion: number,
+): PrinterPosition | null {
+  const x = parseAxisValue(
+    line,
+    "X",
+  );
+
+  const y = parseAxisValue(
+    line,
+    "Y",
+  );
+
+  const z = parseAxisValue(
+    line,
+    "Z",
+  );
+
+  if (
+    x === null ||
+    y === null ||
+    z === null
+  ) {
+    return null;
+  }
+
+  const e = parseAxisValue(
+    line,
+    "E",
+  );
+
+  return {
+    x,
+    y,
+    z,
+    e: e ?? currentExtrusion,
+  };
+}
+
+export function parsePrinterResponse(
+  rawLine: string,
+  currentExtrusion: number,
+): ParsedPrinterResponse {
+  const line = rawLine.trim();
+
+  return {
+    acknowledge:
+      /^ok\b/i.test(line),
+
+    error:
+      /^(?:error|!!)/i.test(line)
+        ? new Error(line)
+        : null,
+
+    temperature:
+      parseTemperature(line),
+
+    position:
+      parsePosition(
+        line,
+        currentExtrusion,
+      ),
+  };
+}

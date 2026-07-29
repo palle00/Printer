@@ -1,3 +1,7 @@
+import type {
+  GcodeSegment,
+} from "./gcode";
+
 export type PrinterStatus =
   | "disconnected"
   | "idle"
@@ -6,13 +10,10 @@ export type PrinterStatus =
   | "paused"
   | "stopping";
 
-export interface TemperatureSample {
-  timestamp: number;
-  hotend: number;
-  targetHotend: number;
-  bed: number;
-  targetBed: number;
-}
+export type PrintMode =
+  | "real"
+  | "test"
+  | null;
 
 export interface PrinterPosition {
   x: number;
@@ -22,21 +23,35 @@ export interface PrinterPosition {
 }
 
 export interface PrintProgress {
-  fileName: string;
+  fileName: string | null;
+
   currentLine: number;
   totalLines: number;
-  percent: number;
-  elapsedSeconds: number;
-  etaSeconds: number;
+
   currentLayer: number;
   totalLayers: number;
+
+  percent: number;
+
+  elapsedSeconds: number;
+  etaSeconds: number;
+}
+
+export interface TemperatureSample {
+  timestamp: number;
+
+  hotend: number;
+  targetHotend: number;
+
+  bed: number;
+  targetBed: number;
 }
 
 export interface PrinterState {
   connected: boolean;
-  status: PrinterStatus;
 
-  position: PrinterPosition;
+  status: PrinterStatus;
+  mode: PrintMode;
 
   hotend: number;
   targetHotend: number;
@@ -44,11 +59,117 @@ export interface PrinterState {
   bed: number;
   targetBed: number;
 
-  progress: PrintProgress;
+  temperatureHistory:
+    TemperatureSample[];
+
   terminal: string[];
-  temperatureHistory: TemperatureSample[];
   error: string | null;
+
+  progress: PrintProgress;
+  position: PrinterPosition;
 }
+
+export const initialPrinterPosition:
+  PrinterPosition = {
+    x: 0,
+    y: 0,
+    z: 0,
+    e: 0,
+  };
+
+export const initialPrintProgress:
+  PrintProgress = {
+    fileName: null,
+
+    currentLine: 0,
+    totalLines: 0,
+
+    currentLayer: 0,
+    totalLayers: 0,
+
+    percent: 0,
+
+    elapsedSeconds: 0,
+    etaSeconds: 0,
+  };
+
+export const initialPrinterState:
+  PrinterState = {
+    connected: false,
+
+    status: "disconnected",
+    mode: null,
+
+    hotend: 0,
+    targetHotend: 0,
+
+    bed: 0,
+    targetBed: 0,
+
+    temperatureHistory: [],
+
+    terminal: [],
+    error: null,
+
+    progress: {
+      ...initialPrintProgress,
+    },
+
+    position: {
+      ...initialPrinterPosition,
+    },
+  };
+
+export type PrinterWorkerCommand =
+  | {
+      type: "CONNECT";
+
+      payload: {
+        readable:
+          ReadableStream<Uint8Array>;
+
+        writable:
+          WritableStream<Uint8Array>;
+      };
+    }
+  | {
+      type: "DISCONNECT";
+    }
+  | {
+      type: "SEND_GCODE";
+      payload: string;
+    }
+  | {
+      type: "START_REAL_PRINT";
+
+      payload: {
+        fileName: string;
+        lines: string[];
+        totalLayers: number;
+      };
+    }
+  | {
+      type: "START_TEST_PRINT";
+
+      payload: {
+        fileName: string;
+        printableLines: number;
+        totalLayers: number;
+        segments: GcodeSegment[];
+      };
+    }
+  | {
+      type: "PAUSE_PRINT";
+    }
+  | {
+      type: "RESUME_PRINT";
+    }
+  | {
+      type: "STOP_PRINT";
+    }
+  | {
+      type: "RESET_PRINT";
+    };
 
 export type PrinterWorkerEvent =
   | {
@@ -62,23 +183,63 @@ export type PrinterWorkerEvent =
       status: PrinterStatus;
     }
   | {
-      type: "TEMPERATURE";
-      hotend: number | null;
-      targetHotend: number | null;
-      bed: number | null;
-      targetBed: number | null;
-      timestamp: number;
+      type: "PRINT_STARTED";
+
+      mode: Exclude<
+        PrintMode,
+        null
+      >;
+
+      fileName: string;
+      totalLines: number;
+      totalLayers: number;
+    }
+  | {
+      type: "PRINT_FINISHED";
+
+      mode: Exclude<
+        PrintMode,
+        null
+      >;
+
+      elapsedSeconds: number;
+    }
+  | {
+      type: "PRINT_STOPPED";
+
+      mode: PrintMode;
+
+      status:
+        | "idle"
+        | "disconnected";
+
+      clearSession: boolean;
+    }
+  | {
+      type: "PRINT_RESET";
+
+      status:
+        | "idle"
+        | "disconnected";
     }
   | {
       type: "PROGRESS";
-      fileName: string;
-      currentLine: number;
-      totalLines: number;
-      percent: number;
-      elapsedSeconds: number;
-      etaSeconds: number;
-      currentLayer: number;
-      totalLayers: number;
+      progress: PrintProgress;
+    }
+  | {
+      type: "POSITION";
+      position: PrinterPosition;
+    }
+  | {
+      type: "TEMPERATURE";
+
+      timestamp: number;
+
+      hotend?: number;
+      targetHotend?: number;
+
+      bed?: number;
+      targetBed?: number;
     }
   | {
       type: "TERMINAL_IN";
@@ -89,71 +250,6 @@ export type PrinterWorkerEvent =
       text: string;
     }
   | {
-      type: "PRINT_STARTED";
-      fileName: string;
-      totalLines: number;
-      totalLayers: number;
-    }
-  | {
-      type: "PRINT_FINISHED";
-      fileName: string;
-      elapsedSeconds: number;
-    }
-  | {
-      type: "PRINT_PAUSED";
-    }
-  | {
-      type: "PRINT_RESUMED";
-    }
-  | {
-      type: "PRINT_STOPPING";
-    }
-  | {
-      type: "PRINT_STOPPED";
-      fileName: string;
-    }
-  | {
       type: "ERROR";
       message: string;
-    }
-  | {
-    type: "POSITION";
-    x: number;
-    y: number;
-    z: number;
-    e: number;
-  };
-
-export const initialPrintProgress: PrintProgress = {
-  fileName: "",
-  currentLine: 0,
-  totalLines: 0,
-  percent: 0,
-  elapsedSeconds: 0,
-  etaSeconds: 0,
-  currentLayer: 0,
-  totalLayers: 0,
-};
-
-export const initialPrinterState: PrinterState = {
-  connected: false,
-  status: "disconnected",
-
-  position: {
-    x: 0,
-    y: 0,
-    z: 0,
-    e: 0,
-  },
-
-  hotend: 0,
-  targetHotend: 0,
-
-  bed: 0,
-  targetBed: 0,
-
-  progress: initialPrintProgress,
-  terminal: [],
-  temperatureHistory: [],
-  error: null,
-};
+    };

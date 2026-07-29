@@ -1,138 +1,148 @@
-import { useEffect } from "react";
-import { usePrinter } from "./usePrinter";
-import { useTestPrint } from "./useTestPrint";
-import { useGcode } from "./useGcode";
+import {
+  useEffect,
+} from "react";
+
+import {
+  usePrinter,
+} from "./usePrinter";
+
+import {
+  useGcode,
+} from "./useGcode";
 
 export function usePrinterDashboard() {
-  const printer = usePrinter();
-  const testPrint = useTestPrint();
+  const printer =
+    usePrinter();
 
   const {
     gcode,
     isLoading,
+
     error: fileError,
+
     handleFileInput,
     clearFile,
   } = useGcode();
 
-  const isRealPrintActive =
-    printer.status === "printing" ||
-    printer.status === "pausing" ||
-    printer.status === "paused" ||
-    printer.status === "stopping";
-
-  const isTestPrintActive =
-    testPrint.status === "printing" ||
-    testPrint.status === "pausing" ||
-    testPrint.status === "paused" ||
-    testPrint.status === "stopping";
-
   const hasActivePrint =
-    isRealPrintActive || isTestPrintActive;
+    printer.status ===
+      "printing" ||
+    printer.status ===
+      "pausing" ||
+    printer.status ===
+      "paused" ||
+    printer.status ===
+      "stopping";
 
   const canStartPrint =
     printer.connected &&
     printer.status === "idle" &&
+    !printer.isTestMode &&
     gcode !== null;
 
   const canStartTestPrint =
     !printer.connected &&
-    gcode !== null &&
-    !isTestPrintActive;
-
-  const displayStatus = testPrint.isTestMode
-    ? testPrint.status
-    : printer.status;
-
-  const displayProgress = testPrint.isTestMode
-    ? testPrint.progress
-    : printer.progress;
-
-  const displayPosition = testPrint.isTestMode
-    ? testPrint.position
-    : printer.position;
-
-  const error =
-    printer.error ?? fileError ?? null;
-
-  const clearError = printer.error
-    ? printer.clearError
-    : undefined;
+    !hasActivePrint &&
+    gcode !== null;
 
   useEffect(() => {
-    testPrint.resetTestPrint();
+    printer.resetPrint();
   }, [
     gcode?.fileName,
-    testPrint.resetTestPrint,
+    printer.resetPrint,
   ]);
 
-  const toggleConnection = async () => {
-    if (printer.connected) {
-      await printer.disconnect();
-      return;
-    }
+  const toggleConnection =
+    async () => {
+      if (printer.connected) {
+        printer.disconnect();
+        return;
+      }
 
-    testPrint.resetTestPrint();
-    await printer.connect();
-  };
+      printer.resetPrint();
+
+      await printer.connect();
+    };
 
   const startPrint = () => {
-    if (!gcode || !canStartPrint) {
+    if (
+      !gcode ||
+      !canStartPrint
+    ) {
       return;
     }
 
-    printer.startPrint(
-      gcode.fileName,
-      gcode.text,
-    );
+    printer.startPrint(gcode);
   };
 
   const startTestPrint = () => {
-    if (!gcode || !canStartTestPrint) {
+    if (
+      !gcode ||
+      !canStartTestPrint
+    ) {
       return;
     }
 
-    testPrint.startTestPrint(gcode);
-  };
-
-  const stopActivePrint = () => {
-    if (testPrint.isTestMode) {
-      testPrint.stopTestPrint();
-      return;
-    }
-
-    printer.stopPrint();
+    printer.startTestPrint(
+      gcode,
+    );
   };
 
   return {
     printer,
-    testPrint,
 
     gcode,
     isLoading,
+
     handleFileInput,
     clearFile,
 
-    isRealPrintActive,
-    isTestPrintActive,
     hasActivePrint,
-
     canStartPrint,
     canStartTestPrint,
 
-    displayStatus,
-    displayProgress,
-    displayPosition,
+    isTestMode:
+      printer.isTestMode,
 
-    error,
-    clearError,
+    displayStatus:
+      printer.status,
+
+    displayProgress:
+      printer.progress,
+
+    displayPosition:
+      printer.position,
+
+    error:
+      printer.error ??
+      fileError ??
+      null,
+
+    clearError:
+      printer.error
+        ? printer.clearError
+        : undefined,
 
     toggleConnection,
+
     startPrint,
     startTestPrint,
-    stopActivePrint,
+
+    pausePrint:
+      printer.pausePrint,
+
+    resumePrint:
+      printer.resumePrint,
+
+    stopPrint:
+      printer.stopPrint,
+
+    resetPrint:
+      printer.resetPrint,
   };
 }
 
 export type PrinterDashboard =
-  ReturnType<typeof usePrinterDashboard>;
+  ReturnType<
+    typeof usePrinterDashboard
+  >;

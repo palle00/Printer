@@ -1,9 +1,16 @@
-import type { ParsedGcode } from "../types/gcode";
+import type {
+  ParsedGcode,
+} from "../types/gcode";
+
 import type {
   PrintProgress,
   PrinterStatus,
 } from "../types/printer";
-import { formatDuration } from "../utils/time";
+
+import {
+  formatDuration,
+} from "../utils/time";
+
 import {
   Panel,
   Stat,
@@ -11,11 +18,12 @@ import {
 
 interface PrintJobPanelProps {
   gcode: ParsedGcode | null;
+
   progress: PrintProgress;
 
   connected: boolean;
-  printerStatus: PrinterStatus;
-  testStatus: PrinterStatus;
+
+  status: PrinterStatus;
   isTestMode: boolean;
 
   canStartPrint: boolean;
@@ -24,34 +32,26 @@ interface PrintJobPanelProps {
   onStartPrint: () => void;
   onStartTestPrint: () => void;
 
-  onPausePrint: () => void;
-  onResumePrint: () => void;
-  onStopPrint: () => void;
-
-  onPauseTest: () => void;
-  onResumeTest: () => void;
-  onStopTest: () => void;
-  onResetTest: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onStop: () => void;
+  onReset: () => void;
 }
 
 export default function PrintJobPanel({
   gcode,
   progress,
   connected,
-  printerStatus,
-  testStatus,
+  status,
   isTestMode,
   canStartPrint,
   canStartTestPrint,
   onStartPrint,
   onStartTestPrint,
-  onPausePrint,
-  onResumePrint,
-  onStopPrint,
-  onPauseTest,
-  onResumeTest,
-  onStopTest,
-  onResetTest,
+  onPause,
+  onResume,
+  onStop,
+  onReset,
 }: PrintJobPanelProps) {
   return (
     <Panel title="Print Job">
@@ -105,7 +105,9 @@ export default function PrintJobPanel({
 
         <Stat
           label="Layer"
-          value={`${progress.currentLayer} / ${
+          value={`${
+            progress.currentLayer
+          } / ${
             progress.totalLayers ||
             gcode?.totalLayers ||
             0
@@ -120,19 +122,27 @@ export default function PrintJobPanel({
         commands
       </div>
 
-      {!connected && !isTestMode && (
-        <button
-          type="button"
-          onClick={onStartTestPrint}
-          disabled={!canStartTestPrint}
-          className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-[#181d2c] disabled:text-gray-600 text-white py-2 rounded text-xs font-bold uppercase disabled:cursor-not-allowed"
-        >
-          Test Print
-        </button>
-      )}
+      {!connected &&
+        !isTestMode &&
+        (
+          <button
+            type="button"
+            onClick={
+              onStartTestPrint
+            }
+            disabled={
+              !canStartTestPrint
+            }
+            className="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-[#181d2c] disabled:text-gray-600 text-white py-2 rounded text-xs font-bold uppercase disabled:cursor-not-allowed"
+          >
+            Test Print
+          </button>
+        )}
 
       {connected &&
-        printerStatus === "idle" && (
+        !isTestMode &&
+        status === "idle" &&
+        (
           <button
             type="button"
             onClick={onStartPrint}
@@ -144,11 +154,14 @@ export default function PrintJobPanel({
         )}
 
       {isTestMode &&
-        testStatus === "idle" && (
+        status === "idle" &&
+        (
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={onStartTestPrint}
+              onClick={
+                onStartTestPrint
+              }
               disabled={!gcode}
               className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 text-white py-2 rounded text-xs font-bold uppercase"
             >
@@ -157,7 +170,7 @@ export default function PrintJobPanel({
 
             <button
               type="button"
-              onClick={onResetTest}
+              onClick={onReset}
               className="bg-gray-800 hover:bg-gray-700 text-white py-2 rounded text-xs font-bold uppercase"
             >
               Clear Test
@@ -165,106 +178,66 @@ export default function PrintJobPanel({
           </div>
         )}
 
-      {testStatus === "printing" && (
+      {status === "printing" && (
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={onPauseTest}
+            onClick={onPause}
             className="bg-yellow-600 hover:bg-yellow-500 text-white py-2 rounded text-xs font-bold uppercase"
           >
-            Pause Test
+            {isTestMode
+              ? "Pause Test"
+              : "Pause"}
           </button>
 
           <button
             type="button"
-            onClick={onStopTest}
+            onClick={onStop}
             className="bg-red-600 hover:bg-red-500 text-white py-2 rounded text-xs font-bold uppercase"
           >
-            Stop Test
+            {isTestMode
+              ? "Stop Test"
+              : "Stop"}
           </button>
         </div>
       )}
 
-      {testStatus === "paused" && (
+      {status === "paused" && (
         <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={onResumeTest}
+            onClick={onResume}
             className="bg-green-600 hover:bg-green-500 text-white py-2 rounded text-xs font-bold uppercase"
           >
-            Resume Test
+            {isTestMode
+              ? "Resume Test"
+              : "Resume"}
           </button>
 
           <button
             type="button"
-            onClick={onStopTest}
+            onClick={onStop}
             className="bg-red-600 hover:bg-red-500 text-white py-2 rounded text-xs font-bold uppercase"
           >
-            Stop Test
+            {isTestMode
+              ? "Stop Test"
+              : "Stop"}
           </button>
         </div>
       )}
 
-      {testStatus === "stopping" && (
+      {(status === "pausing" ||
+        status === "stopping") && (
         <button
           type="button"
           disabled
           className="w-full bg-gray-800 text-gray-500 py-2 rounded text-xs font-bold uppercase"
         >
-          Stopping test...
-        </button>
-      )}
-
-      {printerStatus === "printing" && (
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={onPausePrint}
-            className="bg-yellow-600 hover:bg-yellow-500 text-white py-2 rounded text-xs font-bold uppercase"
-          >
-            Pause
-          </button>
-
-          <button
-            type="button"
-            onClick={onStopPrint}
-            className="bg-red-600 hover:bg-red-500 text-white py-2 rounded text-xs font-bold uppercase"
-          >
-            Stop
-          </button>
-        </div>
-      )}
-
-      {printerStatus === "paused" && (
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={onResumePrint}
-            className="bg-green-600 hover:bg-green-500 text-white py-2 rounded text-xs font-bold uppercase"
-          >
-            Resume
-          </button>
-
-          <button
-            type="button"
-            onClick={onStopPrint}
-            className="bg-red-600 hover:bg-red-500 text-white py-2 rounded text-xs font-bold uppercase"
-          >
-            Stop
-          </button>
-        </div>
-      )}
-
-      {(printerStatus === "pausing" ||
-        printerStatus === "stopping") && (
-        <button
-          type="button"
-          disabled
-          className="w-full bg-gray-800 text-gray-500 py-2 rounded text-xs font-bold uppercase"
-        >
-          {printerStatus === "pausing"
+          {status === "pausing"
             ? "Pausing..."
-            : "Safe stopping..."}
+            : isTestMode
+              ? "Stopping test..."
+              : "Safe stopping..."}
         </button>
       )}
     </Panel>

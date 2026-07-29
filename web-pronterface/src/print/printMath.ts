@@ -1,0 +1,264 @@
+import type {
+  GcodeSegment,
+} from "../types/gcode";
+
+import type {
+  PrintProgress,
+  PrinterPosition,
+} from "../types/printer";
+
+const MIN_TEST_DURATION_SECONDS = 20;
+const MAX_TEST_DURATION_SECONDS = 120;
+const SEGMENTS_PER_SECOND = 250;
+
+interface CreateProgressOptions {
+  fileName: string;
+
+  currentLine: number;
+  totalLines: number;
+
+  currentLayer: number;
+  totalLayers: number;
+
+  elapsedSeconds: number;
+
+  estimatedDurationSeconds?: number;
+  percentOverride?: number;
+}
+
+export interface TestFrame {
+  finished: boolean;
+  ratio: number;
+
+  currentLine: number;
+  currentLayer: number;
+
+  position: PrinterPosition;
+}
+
+function clamp(
+  value: number,
+  minimum: number,
+  maximum: number,
+): number {
+  return Math.min(
+    maximum,
+    Math.max(minimum, value),
+  );
+}
+
+export function estimateTestDurationSeconds(
+  segmentCount: number,
+): number {
+  const estimated =
+    segmentCount /
+    SEGMENTS_PER_SECOND;
+
+  return clamp(
+    estimated,
+    MIN_TEST_DURATION_SECONDS,
+    MAX_TEST_DURATION_SECONDS,
+  );
+}
+
+export function createPrintProgress({
+  fileName,
+  currentLine,
+  totalLines,
+  currentLayer,
+  totalLayers,
+  elapsedSeconds,
+  estimatedDurationSeconds,
+  percentOverride,
+}: CreateProgressOptions): PrintProgress {
+  const safeTotalLines = Math.max(
+    0,
+    totalLines,
+  );
+
+  const safeCurrentLine = clamp(
+    currentLine,
+    0,
+    safeTotalLines,
+  );
+
+  const calculatedPercent =
+    safeTotalLines === 0
+      ? 100
+      : (
+          safeCurrentLine /
+          safeTotalLines
+        ) * 100;
+
+  const percent = clamp(
+    percentOverride ??
+      calculatedPercent,
+    0,
+    100,
+  );
+
+  let etaSeconds = 0;
+
+  if (
+    estimatedDurationSeconds !==
+    undefined
+  ) {
+    etaSeconds = Math.max(
+      0,
+      estimatedDurationSeconds -
+        elapsedSeconds,
+    );
+  } else if (
+    safeCurrentLine > 0 &&
+    safeCurrentLine <
+      safeTotalLines
+  ) {
+    const secondsPerCommand =
+      elapsedSeconds /
+      safeCurrentLine;
+
+    etaSeconds =
+      secondsPerCommand *
+      (
+        safeTotalLines -
+        safeCurrentLine
+      );
+  }
+
+  return {
+    fileName,
+
+    currentLine: safeCurrentLine,
+    totalLines: safeTotalLines,
+
+    currentLayer: clamp(
+      currentLayer,
+      totalLayers > 0 ? 1 : 0,
+      Math.max(0, totalLayers),
+    ),
+
+    totalLayers: Math.max(
+      0,
+      totalLayers,
+    ),
+
+    percent,
+    elapsedSeconds: Math.max(
+      0,
+      elapsedSeconds,
+    ),
+
+    etaSeconds: Math.max(
+      0,
+      etaSeconds,
+    ),
+  };
+}
+
+export function calculateTestFrame(
+  segments: GcodeSegment[],
+  printableLines: number,
+  totalLayers: number,
+  elapsedMilliseconds: number,
+  durationMilliseconds: number,
+): TestFrame {
+  const safeDuration =
+    Math.max(
+      1,
+      durationMilliseconds,
+    );
+
+  const ratio = clamp(
+    elapsedMilliseconds /
+      safeDuration,
+    0,
+    1,
+  );
+
+  if (segments.length === 0) {
+    return {
+      finished: true,
+      ratio: 1,
+
+      currentLine:
+        printableLines,
+
+      currentLayer:
+        totalLayers,
+
+      position: {
+        x: 0,
+        y: 0,
+        z: 0,
+        e: 0,
+      },
+    };
+  }
+
+  const segmentProgress =
+    ratio * segments.length;
+
+  const segmentIndex = Math.min(
+    segments.length - 1,
+    Math.floor(segmentProgress),
+  );
+
+  const segment =
+    segments[segmentIndex];
+
+  const localRatio =
+    ratio >= 1
+      ? 1
+      : segmentProgress -
+        segmentIndex;
+
+  const position: PrinterPosition = {
+    x:
+      segment.start.x +
+      (
+        segment.end.x -
+        segment.start.x
+      ) *
+        localRatio,
+
+    y:
+      segment.start.y +
+      (
+        segment.end.y -
+        segment.start.y
+      ) *
+        localRatio,
+
+    z:
+      segment.start.z +
+      (
+        segment.end.z -
+        segment.start.z
+      ) *
+        localRatio,
+
+    e: segment.extruding
+      ? localRatio
+      : 0,
+  };
+
+  return {
+    finished: ratio >= 1,
+    ratio,
+
+    currentLine:
+      ratio >= 1
+        ? printableLines
+        : Math.max(
+            0,
+            segment.commandIndex - 1,
+          ),
+
+    currentLayer:
+      ratio >= 1
+        ? totalLayers
+        : segment.layer,
+
+    position,
+  };
+}
