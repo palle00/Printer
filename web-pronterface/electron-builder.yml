@@ -1,0 +1,53 @@
+appId: dk.patrick.PrintInterface
+productName: PrintInterface
+
+copyright: Copyright © 2026 Patrick Bertelsen
+
+directories:
+  output: release
+
+extraResources:
+  - from: resources/tray-icon.png
+    to: tray-icon.png
+
+files:
+  - out/**/*
+  - package.json
+
+asar: true
+compression: normal
+npmRebuild: true
+
+win:
+  executableName: PrintInterface
+
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+  artifactName: "${productName}-${version}-${arch}-Setup.${ext}"
+
+nsis:
+  oneClick: false
+
+  allowToChangeInstallationDirectory: true
+
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+  shortcutName: PrintInterface
+
+mac:
+  target:
+    - dmg
+
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+linux:
+  target:
+    - AppImage
+
+  category: Utility
+
+  artifactName: "${productName}-${version}-${arch}.${ext}"

@@ -169,7 +169,7 @@ export function usePrinter() {
 
               currentLayer:
                 message.totalLayers >
-                0
+                  0
                   ? 1
                   : 0,
 
@@ -454,6 +454,22 @@ export function usePrinter() {
           ],
         );
       } catch (error) {
+        /*
+         * requestPort() throws NotFoundError when
+         * the native chooser is cancelled.
+         */
+        if (
+          error instanceof DOMException &&
+          error.name === "NotFoundError"
+        ) {
+          appendTerminal(
+            ">> Serial-port selection cancelled.",
+          );
+
+          await closePort();
+          return;
+        }
+
         const message =
           error instanceof Error
             ? error.message
@@ -463,10 +479,7 @@ export function usePrinter() {
           ...previous,
 
           connected: false,
-
-          status:
-            "disconnected",
-
+          status: "disconnected",
           error: message,
         }));
 
