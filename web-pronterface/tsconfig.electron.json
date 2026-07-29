@@ -16,6 +16,7 @@
     "moduleResolution": "Bundler",
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
+
     "noEmit": true,
 
     "strict": true,
@@ -36,7 +37,18 @@
   "include": [
     "electron/**/*.ts",
     "electron.vite.config.ts",
-    "src/types/desktop.ts"
+
+    "src/types/desktop.ts",
+    "src/types/printer-ipc.ts",
+    "src/types/printer.ts",
+    "src/types/gcode.ts",
+
+    "src/print/printMath.ts",
+
+    "src/workers/core/**/*.ts",
+    "src/workers/gcode/**/*.ts",
+    "src/workers/print/**/*.ts",
+    "src/workers/serial/**/*.ts"
   ],
 
   "exclude": [

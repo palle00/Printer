@@ -7,8 +7,8 @@ import {
 } from "../gcode/prepareCommands";
 
 import type {
-  SerialConnection,
-} from "./SerialConnection";
+  SerialTransport,
+} from "./SerialTransport";
 
 const COMMAND_TIMEOUT_MS =
   15 * 60 * 1000;
@@ -31,17 +31,17 @@ type AcknowledgedCommandHandler = (
 export class SerialQueue {
   private pending:
     PendingAcknowledgement | null =
-    null;
+      null;
 
   private chain:
     Promise<void> =
-    Promise.resolve();
+      Promise.resolve();
 
   private generation = 0;
 
   constructor(
     private readonly connection:
-      SerialConnection,
+      SerialTransport,
 
     private readonly events:
       WorkerEvents,
@@ -87,10 +87,9 @@ export class SerialQueue {
         );
       });
 
-    this.chain =
-      task.catch(
-        () => undefined,
-      );
+    this.chain = task.catch(
+      () => undefined,
+    );
 
     return task;
   }
@@ -114,11 +113,11 @@ export class SerialQueue {
   }
 
   resolveAcknowledgement(): void {
-    if (!this.pending) {
+    const pending = this.pending;
+
+    if (!pending) {
       return;
     }
-
-    const pending = this.pending;
 
     this.pending = null;
 
@@ -132,11 +131,11 @@ export class SerialQueue {
   rejectAcknowledgement(
     error: Error,
   ): void {
-    if (!this.pending) {
+    const pending = this.pending;
+
+    if (!pending) {
       return;
     }
-
-    const pending = this.pending;
 
     this.pending = null;
 
@@ -175,7 +174,7 @@ export class SerialQueue {
 
     if (this.pending) {
       throw new Error(
-        "Another printer command is still waiting for acknowledgement.",
+        "Another printer command is awaiting acknowledgement.",
       );
     }
 
@@ -185,43 +184,57 @@ export class SerialQueue {
 
     await new Promise<void>(
       (resolve, reject) => {
-        const timeout = setTimeout(
-          () => {
-            if (this.pending) {
-              this.pending = null;
-            }
-
-            reject(
-              new Error(
-                `Printer did not acknowledge: ${command}`,
-              ),
-            );
-          },
-
-          COMMAND_TIMEOUT_MS,
-        );
-
-        this.pending = {
+        const pending:
+          PendingAcknowledgement = {
           resolve,
+
           reject,
-          timeout,
+
+          timeout: setTimeout(
+            () => {
+              if (
+                this.pending ===
+                pending
+              ) {
+                this.pending = null;
+              }
+
+              reject(
+                new Error(
+                  `Printer did not acknowledge: ${command}`,
+                ),
+              );
+            },
+            COMMAND_TIMEOUT_MS,
+          ),
         };
+
+        this.pending = pending;
 
         void this.connection
           .write(command)
-          .catch((error: unknown) => {
-            clearTimeout(timeout);
+          .catch(
+            (error: unknown) => {
+              if (
+                this.pending ===
+                pending
+              ) {
+                this.pending = null;
+              }
 
-            this.pending = null;
+              clearTimeout(
+                pending.timeout,
+              );
 
-            reject(
-              error instanceof Error
-                ? error
-                : new Error(
-                    String(error),
-                  ),
-            );
-          });
+              reject(
+                error instanceof Error
+                  ? error
+                  : new Error(
+                      String(error),
+                    ),
+              );
+            },
+          );
       },
     );
   }

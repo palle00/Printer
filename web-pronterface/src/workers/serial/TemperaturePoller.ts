@@ -1,16 +1,17 @@
 import type {
-  SerialConnection,
-} from "./SerialConnection";
-
-import type {
   SerialQueue,
 } from "./SerialQueue";
 
-const TEMPERATURE_INTERVAL_MS = 2000;
+import type {
+  SerialTransport,
+} from "./SerialTransport";
+
+const TEMPERATURE_INTERVAL_MS =
+  2000;
 
 interface TemperaturePollerOptions {
   connection:
-    SerialConnection;
+    SerialTransport;
 
   queue:
     SerialQueue;
@@ -29,13 +30,13 @@ export class TemperaturePoller {
     private readonly options:
       TemperaturePollerOptions,
   ) {
-    this.interval = setInterval(
-      () => {
-        this.poll();
-      },
-
-      TEMPERATURE_INTERVAL_MS,
-    );
+    this.interval =
+      setInterval(
+        () => {
+          this.poll();
+        },
+        TEMPERATURE_INTERVAL_MS,
+      );
   }
 
   dispose(): void {

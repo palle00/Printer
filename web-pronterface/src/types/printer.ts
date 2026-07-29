@@ -120,25 +120,7 @@ export const initialPrinterState:
     },
   };
 
-export type PrinterWorkerCommand =
-  | {
-      type: "CONNECT";
-
-      payload: {
-        readable:
-          ReadableStream<Uint8Array>;
-
-        writable:
-          WritableStream<Uint8Array>;
-      };
-    }
-  | {
-      type: "DISCONNECT";
-    }
-  | {
-      type: "SEND_GCODE";
-      payload: string;
-    }
+export type PrinterRuntimeCommand =
   | {
       type: "START_REAL_PRINT";
 
@@ -171,7 +153,7 @@ export type PrinterWorkerCommand =
       type: "RESET_PRINT";
     };
 
-export type PrinterWorkerEvent =
+export type PrinterEvent =
   | {
       type: "CONNECTED";
     }
@@ -253,3 +235,13 @@ export type PrinterWorkerEvent =
       type: "ERROR";
       message: string;
     };
+
+/*
+ * Compatibility aliases for the existing
+ * modular print-engine files.
+ */
+export type PrinterWorkerCommand =
+  PrinterRuntimeCommand;
+
+export type PrinterWorkerEvent =
+  PrinterEvent;

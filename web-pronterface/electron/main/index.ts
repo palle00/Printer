@@ -1,655 +1,429 @@
 import {
-    app,
-    BrowserWindow,
-    dialog,
-    Menu,
-    session,
-    shell,
-    Tray,
+  app,
+  BrowserWindow,
+  Menu,
+  shell,
+  Tray,
 } from "electron";
 
 import path from "node:path";
 
-interface ElectronSerialPortInfo {
-    portId: string;
-    portName: string;
-    displayName?: string;
-    vendorId?: string;
-    productId?: string;
-    serialNumber?: string;
-    deviceInstanceId?: string;
-}
+import {
+  PRINTER_IPC,
+} from "../../src/types/printer-ipc";
 
-let mainWindow: BrowserWindow | null =
-    null;
+import {
+  PrintSleepBlocker,
+} from "./power/PrintSleepBlocker";
 
-let tray: Tray | null = null;
+import {
+  PrinterRuntime,
+} from "./printer/PrinterRuntime";
+
+import {
+  registerPrinterIpc,
+} from "./printer/registerPrinterIpc";
+
+let mainWindow:
+  BrowserWindow | null = null;
+
+let tray:
+  Tray | null = null;
+
+let printerRuntime:
+  PrinterRuntime | null = null;
+
+let unregisterPrinterIpc:
+  (() => void) | null = null;
+
+const sleepBlocker =
+  new PrintSleepBlocker();
 
 function isSafeExternalUrl(
-    value: string,
+  value: string,
 ): boolean {
-    try {
-        const url = new URL(value);
+  try {
+    const url = new URL(value);
 
-        return (
-            url.protocol === "https:" ||
-            url.protocol === "http:"
-        );
-    } catch {
-        return false;
-    }
+    return (
+      url.protocol === "https:" ||
+      url.protocol === "http:"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function openExternalUrl(
-    url: string,
+  value: string,
 ): void {
-    if (!isSafeExternalUrl(url)) {
-        return;
-    }
+  if (!isSafeExternalUrl(value)) {
+    return;
+  }
 
-    void shell.openExternal(url);
+  void shell.openExternal(
+    value,
+  );
 }
 
-function isTrustedRendererOrigin(
-    origin: string,
-): boolean {
-    /*
-     * Production renderer:
-     * file:///.../index.html
-     */
-    if (app.isPackaged) {
-        return origin.startsWith(
-            "file://",
-        );
-    }
-
-    /*
-     * Development renderer:
-     * normally http://localhost:5173
-     */
-    const developmentUrl =
-        process.env[
-        "ELECTRON_RENDERER_URL"
-        ];
-
-    if (developmentUrl) {
-        try {
-            return (
-                new URL(origin).origin ===
-                new URL(
-                    developmentUrl,
-                ).origin
-            );
-        } catch {
-            return false;
-        }
-    }
-
-    return (
-        origin.startsWith(
-            "http://localhost:",
-        ) ||
-        origin.startsWith(
-            "http://127.0.0.1:",
-        )
-    );
-}
-
-function formatSerialPort(
-    port: ElectronSerialPortInfo,
-): string {
-    const name =
-        port.displayName?.trim() ||
-        port.portName ||
-        "Serial device";
-
-    const portName =
-        port.portName &&
-            port.portName !== name
-            ? ` — ${port.portName}`
-            : "";
-
-    const identifiers = [
-        port.vendorId
-            ? `VID ${port.vendorId}`
-            : null,
-
-        port.productId
-            ? `PID ${port.productId}`
-            : null,
-    ].filter(
-        (
-            value,
-        ): value is string =>
-            value !== null,
-    );
-
-    const identifierText =
-        identifiers.length > 0
-            ? ` (${identifiers.join(
-                " · ",
-            )})`
-            : "";
-
-    return `${name}${portName}${identifierText}`;
-}
-
-async function selectSerialPort(
-    owner: BrowserWindow | null,
-    portList:
-        ElectronSerialPortInfo[],
-): Promise<string> {
-    if (portList.length === 0) {
-        const options = {
-            type: "warning" as const,
-
-            title:
-                "No serial devices found",
-
-            message:
-                "No serial devices were detected.",
-
-            detail:
-                "Connect the printer with USB, make sure its driver is installed, and try again.",
-
-            buttons: ["OK"],
-
-            defaultId: 0,
-            cancelId: 0,
-            noLink: true,
-        };
-
-        if (owner) {
-            await dialog.showMessageBox(
-                owner,
-                options,
-            );
-        } else {
-            await dialog.showMessageBox(
-                options,
-            );
-        }
-
-        return "";
-    }
-
-    const portButtons =
-        portList.map(
-            formatSerialPort,
-        );
-
-    const cancelIndex =
-        portButtons.length;
-
-    const options = {
-        type: "question" as const,
-
-        title:
-            "Select printer port",
-
-        message:
-            "Choose the serial port used by your 3D printer.",
-
-        detail:
-            "The printer normally appears as a COM port on Windows.",
-
-        buttons: [
-            ...portButtons,
-            "Cancel",
-        ],
-
-        defaultId: 0,
-        cancelId: cancelIndex,
-
-        noLink: true,
-    };
-
-    const result = owner
-        ? await dialog.showMessageBox(
-            owner,
-            options,
-        )
-        : await dialog.showMessageBox(
-            options,
-        );
-
-    const selectedPort =
-        portList[result.response];
-
-    return (
-        selectedPort?.portId ?? ""
-    );
-}
-
-function configureWebSerial():
-    void {
-    const applicationSession =
-        session.defaultSession;
-
-    /*
-     * Allow Web Serial only for our own
-     * Electron renderer.
-     */
-    applicationSession
-        .setPermissionCheckHandler(
-            (
-                _webContents,
-                permission,
-                requestingOrigin,
-                details,
-            ) => {
-                if (
-                    permission !== "serial"
-                ) {
-                    return false;
-                }
-
-                const origin =
-                    details.securityOrigin ||
-                    requestingOrigin;
-
-                return isTrustedRendererOrigin(
-                    origin,
-                );
-            },
-        );
-
-    /*
-     * Allow the selected serial device
-     * to be used by the renderer.
-     */
-    applicationSession
-        .setDevicePermissionHandler(
-            (details) => {
-                if (
-                    details.deviceType !==
-                    "serial"
-                ) {
-                    return false;
-                }
-
-                return isTrustedRendererOrigin(
-                    details.origin,
-                );
-            },
-        );
-
-    /*
-     * Electron does not provide Chrome's
-     * serial chooser. We create our own
-     * native popup here.
-     */
-    applicationSession.on(
-        "select-serial-port",
-
-        async (
-            event,
-            portList,
-            requestingWebContents,
-            callback,
-        ) => {
-            event.preventDefault();
-
-            const owner =
-                BrowserWindow.fromWebContents(
-                    requestingWebContents,
-                );
-
-            /*
-             * Reject requests coming from an
-             * unknown BrowserWindow.
-             */
-            if (
-                !owner ||
-                owner !== mainWindow
-            ) {
-                callback("");
-                return;
-            }
-
-            try {
-                const selectedPortId =
-                    await selectSerialPort(
-                        owner,
-
-                        portList as
-                        ElectronSerialPortInfo[],
-                    );
-
-                callback(selectedPortId);
-            } catch (error) {
-                console.error(
-                    "Serial-port selection failed:",
-                    error,
-                );
-
-                /*
-                 * An empty ID cancels requestPort().
-                 */
-                callback("");
-            }
-        },
-    );
-}
-
-function getTrayIconPath(): string {
-    if (app.isPackaged) {
-        return path.join(
-            process.resourcesPath,
-            "tray-icon.png",
-        );
-    }
-
+function getTrayIconPath():
+  string {
+  if (app.isPackaged) {
     return path.join(
-        process.cwd(),
-        "resources",
-        "tray-icon.png",
+      process.resourcesPath,
+      "tray-icon.png",
     );
+  }
+
+  return path.join(
+    process.cwd(),
+    "resources",
+    "tray-icon.png",
+  );
 }
 
-function showMainWindow(): void {
-    if (
-        !mainWindow ||
-        mainWindow.isDestroyed()
-    ) {
-        createMainWindow();
-        return;
-    }
+function initialisePrinter():
+  void {
+  if (printerRuntime) {
+    return;
+  }
 
-    /*
-     * Add the window back to the Windows taskbar.
-     */
-    mainWindow.setSkipTaskbar(false);
+  printerRuntime =
+    new PrinterRuntime({
+      emit: (event) => {
+        const window =
+          mainWindow;
 
-    if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-    }
+        if (
+          !window ||
+          window.isDestroyed()
+        ) {
+          return;
+        }
 
-    mainWindow.show();
-    mainWindow.focus();
+        window.webContents.send(
+          PRINTER_IPC.event,
+          event,
+        );
+      },
+
+      setPrintingActive:
+        (active) => {
+          sleepBlocker
+            .setPrintingActive(
+              active,
+            );
+        },
+    });
+
+  unregisterPrinterIpc =
+    registerPrinterIpc({
+      getWindow: () =>
+        mainWindow,
+
+      runtime:
+        printerRuntime,
+    });
+}
+
+function showMainWindow():
+  void {
+  if (
+    !mainWindow ||
+    mainWindow.isDestroyed()
+  ) {
+    createMainWindow();
+    return;
+  }
+
+  mainWindow
+    .setSkipTaskbar(false);
+
+  if (
+    mainWindow.isMinimized()
+  ) {
+    mainWindow.restore();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 function createTray(): void {
-    if (tray) {
-        return;
-    }
+  if (tray) {
+    return;
+  }
 
-    const iconPath =
-        getTrayIconPath();
+  tray = new Tray(
+    getTrayIconPath(),
+  );
 
-    tray = new Tray(iconPath);
+  tray.setToolTip(
+    "Web Pronterface",
+  );
 
-    tray.setToolTip(
-        "Web Pronterface",
-    );
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label:
+          "Open Web Pronterface",
 
-    const menu =
-        Menu.buildFromTemplate([
-            {
-                label:
-                    "Open Web Pronterface",
-
-                click: () => {
-                    showMainWindow();
-                },
-            },
-
-            {
-                type: "separator",
-            },
-
-            {
-                label: "Quit",
-
-                click: () => {
-                    app.quit();
-                },
-            },
-        ]);
-
-    tray.setContextMenu(menu);
-
-    /*
-     * Clicking the tray icon restores
-     * the application.
-     */
-    tray.on(
-        "click",
-        () => {
-            showMainWindow();
+        click: () => {
+          showMainWindow();
         },
-    );
+      },
 
-    tray.on(
-        "double-click",
-        () => {
-            showMainWindow();
+      {
+        type: "separator",
+      },
+
+      {
+        label: "Quit",
+
+        click: () => {
+          app.quit();
         },
-    );
+      },
+    ]),
+  );
+
+  tray.on(
+    "click",
+    showMainWindow,
+  );
+
+  tray.on(
+    "double-click",
+    showMainWindow,
+  );
 }
 
-function createMainWindow(): void {
-    const window =
-        new BrowserWindow({
-            title:
-                "PrintInterface",
+function createMainWindow():
+  void {
+  const window =
+    new BrowserWindow({
+      title:
+        "Web Pronterface",
 
-            width: 1500,
-            height: 950,
+      width: 1500,
+      height: 950,
 
-            minWidth: 1050,
-            minHeight: 700,
+      minWidth: 1050,
+      minHeight: 700,
 
-            backgroundColor:
-                "#0b0e14",
+      backgroundColor:
+        "#0b0e14",
 
-            show: false,
+      show: false,
 
-            autoHideMenuBar: true,
+      autoHideMenuBar: true,
 
-            webPreferences: {
-                preload: path.join(
-                    __dirname,
-                    "../preload/index.js",
-                ),
+      webPreferences: {
+        preload: path.join(
+          __dirname,
+          "../preload/index.js",
+        ),
 
-                nodeIntegration: false,
-                contextIsolation: true,
-                sandbox: true,
-                webSecurity: true,
-                backgroundThrottling: false,
-            },
-        });
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
 
-    mainWindow = window;
+        backgroundThrottling:
+          false,
+      },
+    });
 
-    window.on(
-        "minimize",
-        () => {
-            /*
-             * Wait until Windows has completed the
-             * normal minimize operation, then hide it.
-             */
-            setTimeout(() => {
-                if (window.isDestroyed()) {
-                    return;
-                }
+  mainWindow = window;
 
-                window.hide();
-                window.setSkipTaskbar(true);
-            }, 0);
-        },
+  initialisePrinter();
+
+  window.once(
+    "ready-to-show",
+    () => {
+      window.show();
+    },
+  );
+
+  window.on(
+    "minimize",
+    () => {
+      setTimeout(() => {
+        if (
+          window.isDestroyed()
+        ) {
+          return;
+        }
+
+        window.hide();
+
+        window
+          .setSkipTaskbar(
+            true,
+          );
+      }, 0);
+    },
+  );
+
+  window.on(
+    "show",
+    () => {
+      window.setSkipTaskbar(
+        false,
+      );
+    },
+  );
+
+  window.webContents
+    .setWindowOpenHandler(
+      ({ url }) => {
+        openExternalUrl(url);
+
+        return {
+          action: "deny",
+        };
+      },
     );
 
-    window.on(
-        "show",
-        () => {
-            window.setSkipTaskbar(false);
-        },
-    );
+  window.webContents.on(
+    "will-navigate",
+    (event, url) => {
+      const currentUrl =
+        window.webContents
+          .getURL();
 
-    window.once(
-        "ready-to-show",
-        () => {
-            window.show();
+      if (url === currentUrl) {
+        return;
+      }
 
-            if (!app.isPackaged) {
-                window.focus();
-            }
-        },
+      const developmentUrl =
+        process.env[
+          "ELECTRON_RENDERER_URL"
+        ];
+
+      if (
+        !app.isPackaged &&
+        developmentUrl
+      ) {
+        try {
+          if (
+            new URL(url).origin ===
+            new URL(
+              developmentUrl,
+            ).origin
+          ) {
+            return;
+          }
+        } catch {
+          // Reject malformed URLs.
+        }
+      }
+
+      event.preventDefault();
+
+      openExternalUrl(url);
+    },
+  );
+
+  const developmentUrl =
+    process.env[
+      "ELECTRON_RENDERER_URL"
+    ];
+
+  if (
+    !app.isPackaged &&
+    developmentUrl
+  ) {
+    void window.loadURL(
+      developmentUrl,
     );
 
     window.webContents
-        .setWindowOpenHandler(
-            ({ url }) => {
-                openExternalUrl(url);
-
-                return {
-                    action: "deny",
-                };
-            },
-        );
-
-    window.webContents.on(
-        "will-navigate",
-        (event, url) => {
-            const currentUrl =
-                window.webContents.getURL();
-
-            if (url === currentUrl) {
-                return;
-            }
-
-            const developmentUrl =
-                process.env[
-                "ELECTRON_RENDERER_URL"
-                ];
-
-            if (
-                !app.isPackaged &&
-                developmentUrl
-            ) {
-                try {
-                    if (
-                        new URL(url).origin ===
-                        new URL(
-                            developmentUrl,
-                        ).origin
-                    ) {
-                        return;
-                    }
-                } catch {
-                    // Reject malformed URLs.
-                }
-            }
-
-            event.preventDefault();
-            openExternalUrl(url);
-        },
+      .openDevTools({
+        mode: "detach",
+      });
+  } else {
+    void window.loadFile(
+      path.join(
+        __dirname,
+        "../renderer/index.html",
+      ),
     );
+  }
 
-    const developmentUrl =
-        process.env[
-        "ELECTRON_RENDERER_URL"
-        ];
-
-    if (
-        !app.isPackaged &&
-        developmentUrl
-    ) {
-        void window.loadURL(
-            developmentUrl,
-        );
-
-        window.webContents
-            .openDevTools({
-                mode: "detach",
-            });
-    } else {
-        void window.loadFile(
-            path.join(
-                __dirname,
-                "../renderer/index.html",
-            ),
-        );
-    }
-
-    window.on(
-        "closed",
-        () => {
-            if (
-                mainWindow === window
-            ) {
-                mainWindow = null;
-            }
-        },
-    );
+  window.on(
+    "closed",
+    () => {
+      if (
+        mainWindow === window
+      ) {
+        mainWindow = null;
+      }
+    },
+  );
 }
 
 const hasSingleInstanceLock =
-    app.requestSingleInstanceLock();
+  app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
-    app.quit();
+  app.quit();
 } else {
-    app.on(
-        "second-instance",
-        () => {
-            showMainWindow();
-        },
-    );
-    void app.whenReady().then(
-        () => {
-            if (
-                process.platform ===
-                "win32"
-            ) {
-                app.setAppUserModelId(
-                    "dk.patrick.webpronterface",
-                );
-            }
+  app.on(
+    "second-instance",
+    showMainWindow,
+  );
 
-            /*
-             * Configure this once before creating
-             * the renderer window.
-             */
-            configureWebSerial();
+  void app.whenReady().then(
+    () => {
+      if (
+        process.platform ===
+        "win32"
+      ) {
+        app.setAppUserModelId(
+          "dk.patrick.webpronterface",
+        );
+      }
 
-            createMainWindow();
-            createTray();
+      createMainWindow();
+      createTray();
 
-            app.on(
-                "activate",
-                () => {
-                    if (
-                        BrowserWindow
-                            .getAllWindows()
-                            .length === 0
-                    ) {
-                        createMainWindow();
-                    }
-                },
-            );
-        },
-    );
+      app.on(
+        "activate",
+        showMainWindow,
+      );
+    },
+  );
 }
 
 app.on(
   "before-quit",
   () => {
+    unregisterPrinterIpc?.();
+
+    unregisterPrinterIpc =
+      null;
+
+    void printerRuntime
+      ?.dispose();
+
+    printerRuntime = null;
+
+    sleepBlocker.dispose();
+
     tray?.destroy();
     tray = null;
   },
 );
 
 app.on(
-    "window-all-closed",
-    () => {
-        if (
-            process.platform !==
-            "darwin"
-        ) {
-            app.quit();
-        }
-    },
+  "window-all-closed",
+  () => {
+    if (
+      process.platform !==
+      "darwin"
+    ) {
+      app.quit();
+    }
+  },
 );

@@ -19,12 +19,19 @@ import {
 } from "./sceneRenderer";
 
 import {
+  simplifyToolpath,
+} from "./simplifyToolpath";
+
+import {
   ToolpathRenderer,
 } from "./ToolpathRenderer";
 
 import {
   getSceneLayout,
 } from "./toolpath";
+
+const MAX_PREVIEW_SEGMENTS =
+  150_000;
 
 export class GcodeScene {
   private readonly sceneRenderer:
@@ -38,6 +45,13 @@ export class GcodeScene {
 
   private readonly nozzleRenderer:
     NozzleRenderer;
+
+  /*
+   * Prevents the same ParsedGcode object from being
+   * simplified again if the viewer rerenders.
+   */
+  private readonly simplifiedGcodes =
+    new WeakSet<ParsedGcode>();
 
   private disposed = false;
 
@@ -89,15 +103,88 @@ export class GcodeScene {
       return;
     }
 
+    if (
+      gcode &&
+      !this.simplifiedGcodes.has(
+        gcode,
+      )
+    ) {
+      const result =
+        simplifyToolpath(
+          gcode.segments,
+          {
+            targetSegments:
+              MAX_PREVIEW_SEGMENTS,
+
+            minimumSegmentLengthMm:
+              0.01,
+
+            connectionToleranceMm:
+              0.002,
+
+            initialAngleToleranceDegrees:
+              0.5,
+
+            maximumAngleToleranceDegrees:
+              8,
+
+            initialMaximumMergedLengthMm:
+              3,
+
+            maximumMergedLengthMm:
+              40,
+          },
+        );
+
+      /*
+       * Replace the original array instead of creating
+       * a second ParsedGcode copy.
+       *
+       * Once this function has finished, intermediate
+       * segment objects that are no longer referenced
+       * can be garbage-collected.
+       */
+      gcode.segments =
+        result.segments;
+
+      this.simplifiedGcodes.add(
+        gcode,
+      );
+
+      console.info(
+        [
+          "[G-code preview]",
+
+          result.originalCount
+            .toLocaleString(),
+
+          "segments →",
+
+          result.simplifiedCount
+            .toLocaleString(),
+
+          `(${result.reductionPercent}% reduction)`,
+
+          `angle ${result.angleToleranceDegrees.toFixed(2)}°`,
+
+          `length ${result.maximumMergedLengthMm.toFixed(1)} mm`,
+
+          result.targetLimitApplied
+            ? "target limit applied"
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      );
+    }
+
+    if (signal.aborted) {
+      return;
+    }
+
     const layout =
       getSceneLayout(gcode);
 
-    /*
-     * setGcode performs its synchronous setup
-     * before reaching the asynchronous toolpath
-     * build. Starting it before awaiting means the
-     * bed appears immediately.
-     */
     const loadToolpath =
       this.toolpathRenderer.setGcode(
         gcode,

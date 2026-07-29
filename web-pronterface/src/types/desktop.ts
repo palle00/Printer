@@ -1,3 +1,7 @@
+import type {
+  PrinterApi,
+} from "./printer-ipc";
+
 export interface DesktopVersions {
   electron: string;
   chrome: string;
@@ -11,4 +15,7 @@ export interface DesktopApi {
 
   readonly versions:
     DesktopVersions;
+
+  readonly printer:
+    PrinterApi;
 }

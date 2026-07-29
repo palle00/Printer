@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
 } from "react";
 
@@ -13,100 +12,64 @@ import {
   initialPrintProgress,
   initialPrinterPosition,
   initialPrinterState,
+  type PrinterEvent,
   type PrinterState,
-  type PrinterWorkerCommand,
-  type PrinterWorkerEvent,
 } from "../types/printer";
 
 const MAX_TERMINAL_LINES = 300;
 const MAX_TEMPERATURE_SAMPLES = 60;
 
 export function usePrinter() {
-  const workerRef =
-    useRef<Worker | null>(null);
-
-  const portRef =
-    useRef<SerialPort | null>(null);
-
   const [state, setState] =
     useState<PrinterState>(
       initialPrinterState,
     );
 
-  const postCommand =
+  const appendTerminal =
     useCallback(
-      (
-        command:
-          PrinterWorkerCommand,
+      (text: string) => {
+        setState((previous) => ({
+          ...previous,
 
-        transfer?: Transferable[],
-      ) => {
-        workerRef.current?.postMessage(
-          command,
-          transfer ?? [],
-        );
+          terminal: [
+            ...previous.terminal.slice(
+              -(
+                MAX_TERMINAL_LINES -
+                1
+              ),
+            ),
+
+            text,
+          ],
+        }));
       },
       [],
     );
 
-  const appendTerminal =
-    useCallback((text: string) => {
-      setState((previous) => ({
-        ...previous,
+  const reportError =
+    useCallback(
+      (error: unknown) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : String(error);
 
-        terminal: [
-          ...previous.terminal.slice(
-            -(
-              MAX_TERMINAL_LINES -
-              1
-            ),
-          ),
+        setState((previous) => ({
+          ...previous,
+          error: message,
+        }));
 
-          text,
-        ],
-      }));
-    }, []);
-
-  const closePort =
-    useCallback(async () => {
-      const port = portRef.current;
-
-      portRef.current = null;
-
-      if (!port) {
-        return;
-      }
-
-      try {
-        await port.close();
-      } catch {
-        // The worker may still be
-        // releasing stream locks.
-      }
-    }, []);
-
-  useEffect(() => {
-    const worker = new Worker(
-      new URL(
-        "../workers/printerWorker.ts",
-        import.meta.url,
-      ),
-
-      {
-        type: "module",
+        appendTerminal(
+          `>> ${message}`,
+        );
       },
+      [appendTerminal],
     );
 
-    workerRef.current = worker;
-
-    worker.onmessage = async (
-      event:
-        MessageEvent<
-          PrinterWorkerEvent
-        >,
-    ) => {
-      const message = event.data;
-
+  useEffect(() => {
+    const handleEvent = (
+      message: PrinterEvent,
+    ): void => {
       switch (message.type) {
         case "CONNECTED": {
           setState((previous) => ({
@@ -115,7 +78,6 @@ export function usePrinter() {
             connected: true,
             status: "idle",
             mode: null,
-
             error: null,
           }));
 
@@ -127,14 +89,10 @@ export function usePrinter() {
             ...previous,
 
             connected: false,
-
-            status:
-              "disconnected",
-
+            status: "disconnected",
             mode: null,
           }));
 
-          await closePort();
           break;
         }
 
@@ -153,7 +111,9 @@ export function usePrinter() {
           setState((previous) => ({
             ...previous,
 
-            mode: message.mode,
+            mode:
+              message.mode,
+
             status: "printing",
 
             progress: {
@@ -161,8 +121,6 @@ export function usePrinter() {
 
               fileName:
                 message.fileName,
-
-              currentLine: 0,
 
               totalLines:
                 message.totalLines,
@@ -185,7 +143,9 @@ export function usePrinter() {
           setState((previous) => ({
             ...previous,
 
-            mode: message.mode,
+            mode:
+              message.mode,
+
             status: "idle",
 
             progress: {
@@ -220,6 +180,7 @@ export function usePrinter() {
                 ...previous,
 
                 mode: null,
+
                 status:
                   message.status,
 
@@ -236,7 +197,9 @@ export function usePrinter() {
             return {
               ...previous,
 
-              mode: message.mode,
+              mode:
+                message.mode,
+
               status:
                 message.status,
             };
@@ -250,7 +213,9 @@ export function usePrinter() {
             ...previous,
 
             mode: null,
-            status: message.status,
+
+            status:
+              message.status,
 
             progress: {
               ...initialPrintProgress,
@@ -362,145 +327,45 @@ export function usePrinter() {
       }
     };
 
-    worker.onerror = (event) => {
-      setState((previous) => ({
-        ...previous,
-
-        error:
-          event.message ||
-          "Printer worker failed.",
-      }));
-    };
-
-    return () => {
-      worker.postMessage({
-        type: "DISCONNECT",
-      } satisfies PrinterWorkerCommand);
-
-      worker.terminate();
-
-      workerRef.current = null;
-
-      void closePort();
-    };
-  }, [
-    appendTerminal,
-    closePort,
-  ]);
+    return window.desktop
+      .printer
+      .onEvent(handleEvent);
+  }, [appendTerminal]);
 
   const connect =
     useCallback(async () => {
-      if (
-        !("serial" in navigator)
-      ) {
-        setState((previous) => ({
-          ...previous,
-
-          error:
-            "Web Serial is not supported. Use Chrome, Edge, or Opera.",
-        }));
-
-        return;
-      }
-
-      if (portRef.current) {
-        return;
-      }
-
       try {
-        const port =
-          await navigator.serial.requestPort();
+        const connection =
+          await window.desktop
+            .printer
+            .connect(115200);
 
-        await port.open({
-          baudRate: 115200,
-          dataBits: 8,
-          stopBits: 1,
-          parity: "none",
-          flowControl: "none",
-        } as any);
-
-        if (
-          !port.readable ||
-          !port.writable
-        ) {
-          await port.close();
-
-          throw new Error(
-            "The serial port did not provide readable and writable streams.",
-          );
-        }
-
-        portRef.current = port;
-
-        const readable =
-          port.readable;
-
-        const writable =
-          port.writable;
-
-        postCommand(
-          {
-            type: "CONNECT",
-
-            payload: {
-              readable,
-              writable,
-            },
-          },
-
-          [
-            readable as unknown as Transferable,
-            writable as unknown as Transferable,
-          ],
-        );
-      } catch (error) {
-        /*
-         * requestPort() throws NotFoundError when
-         * the native chooser is cancelled.
-         */
-        if (
-          error instanceof DOMException &&
-          error.name === "NotFoundError"
-        ) {
+        if (!connection) {
           appendTerminal(
-            ">> Serial-port selection cancelled.",
+            ">> Port selection cancelled.",
           );
 
-          await closePort();
           return;
         }
 
-        const message =
-          error instanceof Error
-            ? error.message
-            : String(error);
-
-        setState((previous) => ({
-          ...previous,
-
-          connected: false,
-          status: "disconnected",
-          error: message,
-        }));
-
         appendTerminal(
-          `>> Connection failed: ${message}`,
+          `>> Connected to ${connection.path} at ${connection.baudRate} baud.`,
         );
-
-        await closePort();
+      } catch (error) {
+        reportError(error);
       }
     }, [
       appendTerminal,
-      closePort,
-      postCommand,
+      reportError,
     ]);
 
   const disconnect =
     useCallback(() => {
-      postCommand({
-        type: "DISCONNECT",
-      });
-    }, [postCommand]);
+      void window.desktop
+        .printer
+        .disconnect()
+        .catch(reportError);
+    }, [reportError]);
 
   const sendGcode =
     useCallback(
@@ -512,88 +377,70 @@ export function usePrinter() {
           return;
         }
 
-        postCommand({
-          type: "SEND_GCODE",
-          payload: cleaned,
-        });
+        void window.desktop
+          .printer
+          .sendGcode(cleaned)
+          .catch(reportError);
       },
-      [postCommand],
+      [reportError],
     );
 
   const startPrint =
     useCallback(
       (gcode: ParsedGcode) => {
-        postCommand({
-          type:
-            "START_REAL_PRINT",
-
-          payload: {
-            fileName:
-              gcode.fileName,
-
-            lines:
-              gcode.lines,
-
-            totalLayers:
-              gcode.totalLayers,
-          },
+        void window.desktop.printer.startPrint({
+          fileName: gcode.fileName,
+          lines: gcode.lines,
+          totalLayers: gcode.totalLayers,
         });
       },
-      [postCommand],
+      [reportError],
     );
 
   const startTestPrint =
     useCallback(
       (gcode: ParsedGcode) => {
-        postCommand({
-          type:
-            "START_TEST_PRINT",
-
-          payload: {
-            fileName:
-              gcode.fileName,
-
-            printableLines:
-              gcode.printableLines,
-
-            totalLayers:
-              gcode.totalLayers,
-
-            segments:
-              gcode.segments,
-          },
-        });
+        void window.desktop
+          .printer
+          .startTestPrint(
+            gcode,
+          )
+          .catch(reportError);
       },
-      [postCommand],
+      [reportError],
     );
 
   const pausePrint =
     useCallback(() => {
-      postCommand({
-        type: "PAUSE_PRINT",
-      });
-    }, [postCommand]);
+      void window.desktop
+        .printer
+        .pausePrint()
+        .catch(reportError);
+    }, [reportError]);
 
   const resumePrint =
     useCallback(() => {
-      postCommand({
-        type: "RESUME_PRINT",
-      });
-    }, [postCommand]);
+      void window.desktop
+        .printer
+        .resumePrint()
+        .catch(reportError);
+    }, [reportError]);
 
   const stopPrint =
     useCallback(() => {
-      postCommand({
-        type: "STOP_PRINT",
-      });
-    }, [postCommand]);
+      void window.desktop
+        .printer
+        .stopPrint()
+        .catch(reportError);
+    }, [reportError]);
 
   const resetPrint =
     useCallback(() => {
-      postCommand({
-        type: "RESET_PRINT",
-      });
-    }, [postCommand]);
+      void window.desktop
+        .printer
+        .resetPrint()
+        .catch(reportError);
+    }, [reportError]);
 
   const clearTerminal =
     useCallback(() => {
