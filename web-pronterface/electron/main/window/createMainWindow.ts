@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  type NativeImage,
   shell,
 } from "electron";
 import path from "node:path";
@@ -35,10 +36,12 @@ function isDevelopmentNavigationAllowed(
   }
 }
 
-export function createMainWindow(iconPath: string): BrowserWindow {
+export function createMainWindow(
+  icon: NativeImage,
+): BrowserWindow {
   const window = new BrowserWindow({
     title: "PrintInterface",
-    icon: iconPath,
+    icon,
     width: 1500,
     height: 950,
     minWidth: 1050,

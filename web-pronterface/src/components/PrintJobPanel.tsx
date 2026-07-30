@@ -53,11 +53,38 @@ export default function PrintJobPanel({
   onStop,
   onReset,
 }: PrintJobPanelProps) {
+  const hasSession =
+    progress.fileName !== null;
+  const idleEstimate =
+    gcode?.statistics
+      .estimatedDurationSeconds ??
+    null;
+  const etaValue =
+    hasSession
+      ? progress.etaSeconds
+      : idleEstimate;
+  const estimateSource =
+    progress.estimateSource ??
+    gcode?.statistics
+      .estimateSource ??
+    null;
+  const estimateConfidence =
+    progress.estimateConfidence ??
+    gcode?.statistics
+      .estimateConfidence ??
+    null;
+
   return (
     <Panel title="Print Job">
       {isTestMode && (
         <div className="mb-3 px-2 py-1.5 rounded bg-purple-950/50 border border-purple-800 text-purple-300 text-[10px] font-mono uppercase tracking-wider">
           Simulation mode
+        </div>
+      )}
+
+      {progress.isHeating && (
+        <div className="mb-3 border border-yellow-800 bg-yellow-950/30 px-2 py-1.5 text-[10px] font-mono uppercase text-yellow-300">
+          Heating to target
         </div>
       )}
 
@@ -95,9 +122,9 @@ export default function PrintJobPanel({
         <Stat
           label="ETA"
           value={
-            progress.currentLine > 0
+            etaValue !== null
               ? formatDuration(
-                  progress.etaSeconds,
+                  etaValue,
                 )
               : "--:--"
           }
@@ -114,6 +141,23 @@ export default function PrintJobPanel({
           }`}
         />
       </div>
+
+      {estimateSource && (
+        <div className="mb-3 text-[9px] font-mono uppercase text-gray-600">
+          {hasSession
+            ? "Estimate"
+            : "Pre-print estimate"}
+          {": "}
+          {estimateSource === "slicer"
+            ? "slicer metadata"
+            : estimateSource === "motion"
+              ? "motion model"
+              : "live calibrated"}
+          {estimateConfidence
+            ? ` · ${estimateConfidence} confidence`
+            : ""}
+        </div>
+      )}
 
       <div className="text-[10px] font-mono text-gray-500 mb-3">
         {progress.currentLine.toLocaleString()}{" "}

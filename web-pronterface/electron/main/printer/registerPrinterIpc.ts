@@ -1,7 +1,6 @@
 import {
   ipcMain,
   type BrowserWindow,
-  type IpcMainInvokeEvent,
 } from "electron";
 
 import {
@@ -15,25 +14,13 @@ import {
   assertRealPrintPayload,
   assertTestPrintPayload,
 } from "./printerIpcValidation";
+import {
+  assertTrustedSender,
+} from "../ipc/assertTrustedSender";
 
 interface RegisterPrinterIpcOptions {
   getWindow(): BrowserWindow | null;
   runtime: PrinterRuntime;
-}
-
-function assertTrustedSender(
-  event: IpcMainInvokeEvent,
-  window: BrowserWindow | null,
-): BrowserWindow {
-  if (
-    !window ||
-    window.isDestroyed() ||
-    event.sender !== window.webContents
-  ) {
-    throw new Error("Unauthorized printer request.");
-  }
-
-  return window;
 }
 
 export function registerPrinterIpc({

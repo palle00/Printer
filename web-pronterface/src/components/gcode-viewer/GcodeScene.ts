@@ -1,6 +1,9 @@
 import type {
   ParsedGcode,
 } from "../../types/gcode";
+import type {
+  GcodeFeatureCategory,
+} from "../../gcode/features";
 
 import type {
   PrinterPosition,
@@ -43,6 +46,13 @@ export class GcodeScene {
 
   constructor(
     mount: HTMLDivElement,
+    featureVisibility:
+      Readonly<
+        Record<
+          GcodeFeatureCategory,
+          boolean
+        >
+      >,
   ) {
     this.sceneRenderer =
       new SceneRenderer(mount);
@@ -61,6 +71,7 @@ export class GcodeScene {
       new ToolpathRenderer(
         this.sceneRenderer.scene,
         this.sceneRenderer.requestRender,
+        featureVisibility,
       );
 
     this.nozzleRenderer =
@@ -147,6 +158,25 @@ export class GcodeScene {
     this.toolpathRenderer.setPrintedCommand(
       command,
     );
+  }
+
+  setFeatureVisibility(
+    visibility:
+      Readonly<
+        Record<
+          GcodeFeatureCategory,
+          boolean
+        >
+      >,
+  ): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.toolpathRenderer
+      .setFeatureVisibility(
+        visibility,
+      );
   }
 
   setNozzle(

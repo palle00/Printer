@@ -204,7 +204,9 @@ export class PrinterRuntime {
         await this.connection
             .disconnect();
 
-        this.events.disconnected();
+        this.events.disconnected(
+            false,
+        );
     }
 
     async sendGcode(
@@ -373,7 +375,9 @@ export class PrinterRuntime {
                     }
 
                     this.events
-                        .disconnected();
+                        .disconnected(
+                            true,
+                        );
                 },
             );
     }

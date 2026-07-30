@@ -3,22 +3,12 @@ export interface PreparedCommands {
   layers: Uint32Array<ArrayBufferLike>;
 }
 
-export function stripGcodeLine(
-  rawLine: string,
-): string {
-  const withoutComment =
-    rawLine.split(";")[0];
-
-  const withoutChecksum =
-    withoutComment.split("*")[0];
-
-  return withoutChecksum
-    .replace(
-      /^\s*N\d+\s+/i,
-      "",
-    )
-    .trim();
-}
+export {
+  stripGcodeLine,
+} from "../../gcode/commandLine";
+import {
+  stripGcodeLine,
+} from "../../gcode/commandLine";
 
 function clampLayer(
   layer: number,

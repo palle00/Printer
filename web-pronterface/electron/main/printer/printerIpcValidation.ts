@@ -46,6 +46,34 @@ export function assertRealPrintPayload(
   ) {
     throw new Error("Print payload contains an invalid layer count.");
   }
+
+  const timing = print.timing;
+
+  if (
+    !timing ||
+    !(
+      timing.cumulativeSeconds instanceof
+      Float32Array
+    ) ||
+    timing.cumulativeSeconds.length < 1 ||
+    typeof timing.totalSeconds !== "number" ||
+    !Number.isFinite(timing.totalSeconds) ||
+    timing.totalSeconds < 0 ||
+    typeof timing.heatingSeconds !== "number" ||
+    !Number.isFinite(timing.heatingSeconds) ||
+    timing.heatingSeconds < 0 ||
+    timing.heatingSeconds >
+      timing.totalSeconds ||
+    (timing.source !== "slicer" &&
+      timing.source !== "motion") ||
+    (timing.confidence !== "low" &&
+      timing.confidence !== "medium" &&
+      timing.confidence !== "high")
+  ) {
+    throw new Error(
+      "Print payload contains an invalid timing model.",
+    );
+  }
 }
 
 export function assertTestPrintPayload(

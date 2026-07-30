@@ -2,6 +2,11 @@ import type {
   GcodePoint,
   GcodeSegment,
 } from "../types/gcode";
+import {
+  getFeatureCategory,
+  getFeatureIndex,
+  type GcodeFeatureCategory,
+} from "./features";
 
 const COORDINATES_PER_SEGMENT = 6;
 const INITIAL_CAPACITY = 16_384;
@@ -12,6 +17,7 @@ export class GcodeSegmentStore {
     readonly commandIndexes: Uint32Array<ArrayBufferLike>,
     readonly layers: Uint32Array<ArrayBufferLike>,
     readonly extruding: Uint8Array<ArrayBufferLike>,
+    readonly featureIndexes: Uint8Array<ArrayBufferLike>,
   ) {}
 
   get length(): number {
@@ -26,6 +32,10 @@ export class GcodeSegmentStore {
     const offset = index * COORDINATES_PER_SEGMENT;
     const extruding = this.extruding[index] !== 0;
     const layer = this.layers[index];
+    const feature =
+      getFeatureCategory(
+        this.featureIndexes[index],
+      );
 
     const start: GcodePoint = {
       x: this.coordinates[offset],
@@ -48,6 +58,7 @@ export class GcodeSegmentStore {
       layer,
       commandIndex: this.commandIndexes[index],
       extruding,
+      feature,
     };
   }
 }
@@ -58,6 +69,8 @@ export class GcodeSegmentStoreBuilder {
   private commandIndexes = new Uint32Array(INITIAL_CAPACITY);
   private layers = new Uint32Array(INITIAL_CAPACITY);
   private extruding = new Uint8Array(INITIAL_CAPACITY);
+  private featureIndexes =
+    new Uint8Array(INITIAL_CAPACITY);
   private count = 0;
 
   append(
@@ -70,6 +83,7 @@ export class GcodeSegmentStoreBuilder {
     layer: number,
     commandIndex: number,
     isExtruding: boolean,
+    feature: GcodeFeatureCategory,
   ): void {
     this.ensureCapacity(this.count + 1);
 
@@ -83,6 +97,8 @@ export class GcodeSegmentStoreBuilder {
     this.commandIndexes[this.count] = Math.max(0, commandIndex);
     this.layers[this.count] = Math.max(1, layer);
     this.extruding[this.count] = isExtruding ? 1 : 0;
+    this.featureIndexes[this.count] =
+      getFeatureIndex(feature);
     this.count++;
   }
 
@@ -92,6 +108,7 @@ export class GcodeSegmentStoreBuilder {
       this.commandIndexes.slice(0, this.count),
       this.layers.slice(0, this.count),
       this.extruding.slice(0, this.count),
+      this.featureIndexes.slice(0, this.count),
     );
   }
 
@@ -109,14 +126,18 @@ export class GcodeSegmentStoreBuilder {
     const nextCommandIndexes = new Uint32Array(nextCapacity);
     const nextLayers = new Uint32Array(nextCapacity);
     const nextExtruding = new Uint8Array(nextCapacity);
+    const nextFeatureIndexes =
+      new Uint8Array(nextCapacity);
 
     nextCoordinates.set(this.coordinates);
     nextCommandIndexes.set(this.commandIndexes);
     nextLayers.set(this.layers);
     nextExtruding.set(this.extruding);
+    nextFeatureIndexes.set(this.featureIndexes);
     this.coordinates = nextCoordinates;
     this.commandIndexes = nextCommandIndexes;
     this.layers = nextLayers;
     this.extruding = nextExtruding;
+    this.featureIndexes = nextFeatureIndexes;
   }
 }

@@ -2,13 +2,20 @@ import {
   Menu,
   Tray,
   app,
+  type NativeImage,
 } from "electron";
 
 export function createTray(
-  iconPath: string,
+  icon: NativeImage,
   showMainWindow: () => void,
 ): Tray {
-  const tray = new Tray(iconPath);
+  const tray = new Tray(
+    icon.resize({
+      width: 32,
+      height: 32,
+      quality: "best",
+    }),
+  );
 
   tray.setToolTip("PrintInterface");
   tray.setContextMenu(

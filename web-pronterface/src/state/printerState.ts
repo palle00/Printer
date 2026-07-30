@@ -96,6 +96,11 @@ export function reducePrinterEvent(
           ...state,
           mode: event.mode,
           status: event.status,
+          progress: {
+            ...state.progress,
+            etaSeconds: 0,
+            isHeating: false,
+          },
         };
       }
 

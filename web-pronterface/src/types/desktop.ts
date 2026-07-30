@@ -1,6 +1,10 @@
 import type {
   PrinterApi,
 } from "./printer-ipc";
+import type {
+  DesktopFileApi,
+  DesktopSettingsApi,
+} from "./desktop-files";
 
 export interface DesktopVersions {
   electron: string;
@@ -18,4 +22,8 @@ export interface DesktopApi {
 
   readonly printer:
     PrinterApi;
+  readonly files:
+    DesktopFileApi;
+  readonly settings:
+    DesktopSettingsApi;
 }

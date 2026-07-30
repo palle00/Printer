@@ -8,6 +8,8 @@ interface AppHeaderProps {
   hasActivePrint: boolean;
   onToggleConnection: () => void | Promise<void>;
   onStopPrint: () => void;
+  onOpenNotifications:
+    () => void;
 }
 
 const statusLabels: Record<
@@ -41,6 +43,7 @@ function AppHeader({
   hasActivePrint,
   onToggleConnection,
   onStopPrint,
+  onOpenNotifications,
 }: AppHeaderProps) {
   return (
     <header className="bg-[#121620] border-b border-gray-800 px-4 py-3 flex items-center justify-between gap-4">
@@ -51,6 +54,14 @@ function AppHeader({
       </div>
 
       <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onOpenNotifications}
+          title="Notification settings"
+          className="border border-gray-800 bg-[#181d2c] px-3 py-1.5 text-xs text-gray-400 hover:text-white"
+        >
+          Alerts
+        </button>
         <div className="flex items-center gap-2 bg-[#181d2c] px-3 py-1.5 rounded border border-gray-800 text-xs">
           <span
             className={`w-2 h-2 rounded-full ${

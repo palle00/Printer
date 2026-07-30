@@ -2,6 +2,10 @@ import {
   createPrintProgress,
   estimateTestDurationSeconds,
 } from "../../print/printMath";
+import {
+  createLiveCalibrationState,
+  updateLiveEta,
+} from "../../print/liveEta";
 
 import type {
   RealPrintPayload,
@@ -192,6 +196,19 @@ export class PrintSessionManager {
         payload.totalLayers,
       );
 
+    if (
+      payload.timing
+        .cumulativeSeconds.length !==
+      commands.texts.length + 1
+    ) {
+      this.options.events.error(
+        new Error(
+          "The print timing model does not match the G-code commands.",
+        ),
+      );
+      return;
+    }
+
     const session:
       RealSession = {
       ...createBaseSession(
@@ -203,6 +220,15 @@ export class PrintSessionManager {
 
       mode: "real",
       commands,
+      timing: payload.timing,
+      calibration:
+        createLiveCalibrationState(),
+      heatingCompletedAtActiveSeconds:
+        null,
+      lastProgressEmitAtMs: 0,
+      lastCalibratedTotalSeconds:
+        payload.timing.totalSeconds,
+      progressTimer: null,
     };
 
     this.session = session;
@@ -217,7 +243,21 @@ export class PrintSessionManager {
       payload.totalLayers,
     );
 
-    this.emitProgress(session);
+    this.emitProgress(
+      session,
+      {
+        force: true,
+      },
+    );
+    session.progressTimer =
+      setInterval(
+        () => {
+          this.emitProgress(
+            session,
+          );
+        },
+        250,
+      );
 
     void this.realRunner.run(
       session,
@@ -465,6 +505,9 @@ export class PrintSessionManager {
         session,
       );
     } else {
+      this.clearRealProgressTimer(
+        session,
+      );
       session.stopRequested = true;
 
       session.resumeResolver?.();
@@ -495,10 +538,176 @@ export class PrintSessionManager {
       return;
     }
 
+    const now = performance.now();
+
+    if (
+      session.mode === "real" &&
+      !progressOptions?.force &&
+      now -
+        session.lastProgressEmitAtMs <
+        1_000
+    ) {
+      return;
+    }
+
+    if (session.mode === "real") {
+      session.lastProgressEmitAtMs =
+        now;
+    }
+
     const elapsedSeconds =
       getElapsedMilliseconds(
         session,
       ) / 1000;
+
+    let realTiming:
+      {
+        percentOverride: number;
+        etaSecondsOverride: number;
+        estimatedTotalSeconds: number;
+        estimateSource:
+          "slicer" | "motion" | "live";
+        estimateConfidence:
+          "low" | "medium" | "high";
+        isHeating: boolean;
+      }
+      | undefined;
+
+    if (session.mode === "real") {
+      const timing = session.timing;
+      const predictedElapsed =
+        timing.cumulativeSeconds[
+          Math.min(
+            session.currentLine,
+            timing
+              .cumulativeSeconds
+              .length - 1,
+          )
+        ];
+      const totalSeconds =
+        Math.max(
+          0,
+          timing.totalSeconds,
+        );
+      const heatingSeconds =
+        Math.min(
+          totalSeconds,
+          Math.max(
+            0,
+            timing.heatingSeconds,
+          ),
+        );
+      const isHeating =
+        heatingSeconds > 0 &&
+        predictedElapsed <
+          heatingSeconds;
+
+      if (
+        !isHeating &&
+        session
+          .heatingCompletedAtActiveSeconds ===
+          null
+      ) {
+        session
+          .heatingCompletedAtActiveSeconds =
+          elapsedSeconds;
+      }
+
+      if (isHeating) {
+        realTiming = {
+          percentOverride:
+            totalSeconds > 0
+              ? (
+                  predictedElapsed /
+                  totalSeconds
+                ) *
+                100
+              : 0,
+          etaSecondsOverride:
+            Math.max(
+              0,
+              (
+                totalSeconds -
+                heatingSeconds
+              ) +
+                Math.max(
+                  0,
+                  heatingSeconds -
+                    elapsedSeconds,
+                ),
+            ),
+          estimatedTotalSeconds:
+            totalSeconds,
+          estimateSource:
+            timing.source,
+          estimateConfidence:
+            "low",
+          isHeating: true,
+        };
+      } else {
+        const actualHeatingSeconds =
+          session
+            .heatingCompletedAtActiveSeconds ??
+          0;
+        const live = updateLiveEta({
+          state:
+            session.calibration,
+          actualPrintSeconds:
+            Math.max(
+              0,
+              elapsedSeconds -
+                actualHeatingSeconds,
+            ),
+          predictedPrintElapsedSeconds:
+            Math.max(
+              0,
+              predictedElapsed -
+                heatingSeconds,
+            ),
+          predictedPrintTotalSeconds:
+            Math.max(
+              0,
+              totalSeconds -
+                heatingSeconds,
+            ),
+          baseSource:
+            timing.source,
+          baseConfidence:
+            session.currentLine ===
+            0
+              ? "low"
+              : timing.confidence,
+        });
+
+        session.calibration =
+          live.state;
+        session
+          .lastCalibratedTotalSeconds =
+          actualHeatingSeconds +
+          live
+            .calibratedTotalPrintSeconds;
+        realTiming = {
+          percentOverride:
+            totalSeconds > 0
+              ? (
+                  predictedElapsed /
+                  totalSeconds
+                ) *
+                100
+              : 100,
+          etaSecondsOverride:
+            live.remainingSeconds,
+          estimatedTotalSeconds:
+            session
+              .lastCalibratedTotalSeconds,
+          estimateSource:
+            live.source,
+          estimateConfidence:
+            live.confidence,
+          isHeating: false,
+        };
+      }
+    }
 
     const progress =
       createPrintProgress({
@@ -526,6 +735,7 @@ export class PrintSessionManager {
         estimatedDurationSeconds:
           progressOptions
             ?.estimatedDurationSeconds,
+        ...realTiming,
       });
 
     this.options.events.progress(
@@ -541,6 +751,12 @@ export class PrintSessionManager {
     }
 
     pauseSessionClock(session);
+
+    if (session.mode === "real") {
+      this.clearRealProgressTimer(
+        session,
+      );
+    }
 
     session.currentLine =
       session.totalLines;
@@ -563,14 +779,58 @@ export class PrintSessionManager {
           }
         : {
             percentOverride: 100,
+            force: true,
           },
     );
+
+    const actualSeconds =
+      session.elapsedBeforeRunMs /
+      1000;
+    const originalEstimate =
+      session.mode === "real"
+        ? session.timing.totalSeconds
+        : session.durationMs / 1000;
+    const finalEstimate =
+      session.mode === "real"
+        ? session
+            .lastCalibratedTotalSeconds
+        : originalEstimate;
+    const absoluteError =
+      Math.abs(
+        originalEstimate -
+          actualSeconds,
+      );
 
     this.options.events.printFinished(
       session.mode,
 
-      session.elapsedBeforeRunMs /
-        1000,
+      actualSeconds,
+      {
+        originalEstimateSeconds:
+          originalEstimate,
+        finalCalibratedEstimateSeconds:
+          finalEstimate,
+        actualActiveSeconds:
+          actualSeconds,
+        absoluteErrorSeconds:
+          absoluteError,
+        percentageError:
+          actualSeconds > 0
+            ? (
+                absoluteError /
+                actualSeconds
+              ) *
+              100
+            : null,
+        estimateSource:
+          session.mode === "real"
+            ? session.calibration
+                .sampleCount > 0
+              ? "live"
+              : session.timing
+                  .source
+            : null,
+      },
     );
   }
 
@@ -580,6 +840,12 @@ export class PrintSessionManager {
   ): void {
     if (this.session !== session) {
       return;
+    }
+
+    if (session.mode === "real") {
+      this.clearRealProgressTimer(
+        session,
+      );
     }
 
     session.status = "idle";
@@ -639,5 +905,21 @@ export class PrintSessionManager {
     );
 
     this.testStopTimer = null;
+  }
+
+  private clearRealProgressTimer(
+    session: RealSession,
+  ): void {
+    if (
+      session.progressTimer ===
+      null
+    ) {
+      return;
+    }
+
+    clearInterval(
+      session.progressTimer,
+    );
+    session.progressTimer = null;
   }
 }

@@ -1,6 +1,7 @@
 "use strict";
 const electron = require("electron");
 const path = require("node:path");
+const node_fs = require("node:fs");
 const parserReadline = require("@serialport/parser-readline");
 const serialport = require("serialport");
 const PRINTER_IPC = {
@@ -16,6 +17,246 @@ const PRINTER_IPC = {
   resetPrint: "printer:reset-print",
   event: "printer:event"
 };
+const DESKTOP_IPC = {
+  chooseGcodeFile: "desktop:choose-gcode-file",
+  readGcodePath: "desktop:read-gcode-path",
+  markGcodeOpened: "desktop:mark-gcode-opened",
+  removeRecentFile: "desktop:remove-recent-file",
+  clearRecentFiles: "desktop:clear-recent-files",
+  getSettings: "desktop:get-settings",
+  updateNotifications: "desktop:update-notifications"
+};
+const SUPPORTED_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".gcode",
+  ".gco",
+  ".gc",
+  ".g"
+]);
+const MAXIMUM_FILE_SIZE = 2 * 1024 * 1024 * 1024;
+function isSupportedGcodePath(filePath) {
+  return SUPPORTED_EXTENSIONS.has(
+    path.extname(filePath).toLowerCase()
+  );
+}
+function assertGcodePath(value) {
+  if (typeof value !== "string" || !path.isAbsolute(value) || !isSupportedGcodePath(value)) {
+    throw new Error(
+      "Choose a G-code, GCO, GC, or G file."
+    );
+  }
+  return path.normalize(value);
+}
+async function readGcodeFile(requestedPath) {
+  const details = await inspectGcodeFile(
+    requestedPath
+  );
+  return {
+    path: details.path,
+    name: details.name,
+    size: details.size,
+    text: await node_fs.promises.readFile(
+      details.path,
+      "utf8"
+    )
+  };
+}
+async function inspectGcodeFile(requestedPath) {
+  const filePath = assertGcodePath(requestedPath);
+  let details;
+  try {
+    details = await node_fs.promises.stat(
+      filePath
+    );
+  } catch {
+    throw new Error(
+      "The G-code file no longer exists."
+    );
+  }
+  if (!details.isFile()) {
+    throw new Error(
+      "The selected path is not a file."
+    );
+  }
+  if (details.size <= 0 || details.size > MAXIMUM_FILE_SIZE) {
+    throw new Error(
+      details.size <= 0 ? "The selected G-code file is empty." : "The selected G-code file is too large."
+    );
+  }
+  return {
+    path: filePath,
+    name: path.basename(filePath),
+    size: details.size,
+    lastOpenedAt: Date.now()
+  };
+}
+async function chooseGcodeFile(window) {
+  const result = await electron.dialog.showOpenDialog(
+    window,
+    {
+      title: "Open G-code file",
+      properties: [
+        "openFile"
+      ],
+      filters: [
+        {
+          name: "G-code files",
+          extensions: [
+            "gcode",
+            "gco",
+            "gc",
+            "g"
+          ]
+        }
+      ]
+    }
+  );
+  if (result.canceled || result.filePaths.length !== 1) {
+    return null;
+  }
+  return readGcodeFile(
+    result.filePaths[0]
+  );
+}
+function assertTrustedSender(event, window) {
+  if (!window || window.isDestroyed() || event.sender !== window.webContents) {
+    throw new Error(
+      "Unauthorized desktop request."
+    );
+  }
+  return window;
+}
+const NOTIFICATION_KEYS = /* @__PURE__ */ new Set([
+  "enabled",
+  "printStarted",
+  "printPaused",
+  "printCompleted",
+  "printStopped",
+  "printerDisconnected",
+  "printerErrors",
+  "temperatureReached"
+]);
+function assertNotificationUpdate(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      "Invalid notification settings."
+    );
+  }
+  const update = {};
+  for (const [
+    key,
+    setting
+  ] of Object.entries(value)) {
+    if (!NOTIFICATION_KEYS.has(
+      key
+    ) || typeof setting !== "boolean") {
+      throw new Error(
+        "Invalid notification settings."
+      );
+    }
+    update[key] = setting;
+  }
+  return update;
+}
+function registerDesktopIpc({
+  getWindow,
+  settings
+}) {
+  const channels = Object.values(DESKTOP_IPC);
+  for (const channel of channels) {
+    electron.ipcMain.removeHandler(channel);
+  }
+  electron.ipcMain.handle(
+    DESKTOP_IPC.chooseGcodeFile,
+    (event) => {
+      const window = assertTrustedSender(
+        event,
+        getWindow()
+      );
+      return chooseGcodeFile(window);
+    }
+  );
+  electron.ipcMain.handle(
+    DESKTOP_IPC.readGcodePath,
+    (event, filePath) => {
+      assertTrustedSender(
+        event,
+        getWindow()
+      );
+      return readGcodeFile(filePath);
+    }
+  );
+  electron.ipcMain.handle(
+    DESKTOP_IPC.markGcodeOpened,
+    async (event, filePath) => {
+      assertTrustedSender(
+        event,
+        getWindow()
+      );
+      const entry = await inspectGcodeFile(
+        filePath
+      );
+      return settings.addRecentFile(
+        entry
+      );
+    }
+  );
+  electron.ipcMain.handle(
+    DESKTOP_IPC.removeRecentFile,
+    (event, filePath) => {
+      assertTrustedSender(
+        event,
+        getWindow()
+      );
+      if (typeof filePath !== "string") {
+        throw new Error(
+          "Invalid recent file path."
+        );
+      }
+      return settings.removeRecentFile(
+        filePath
+      );
+    }
+  );
+  electron.ipcMain.handle(
+    DESKTOP_IPC.clearRecentFiles,
+    (event) => {
+      assertTrustedSender(
+        event,
+        getWindow()
+      );
+      return settings.clearRecentFiles();
+    }
+  );
+  electron.ipcMain.handle(
+    DESKTOP_IPC.getSettings,
+    (event) => {
+      assertTrustedSender(
+        event,
+        getWindow()
+      );
+      return settings.getSnapshot();
+    }
+  );
+  electron.ipcMain.handle(
+    DESKTOP_IPC.updateNotifications,
+    (event, value) => {
+      assertTrustedSender(
+        event,
+        getWindow()
+      );
+      return settings.updateNotifications(
+        assertNotificationUpdate(
+          value
+        )
+      );
+    }
+  );
+  return () => {
+    for (const channel of channels) {
+      electron.ipcMain.removeHandler(channel);
+    }
+  };
+}
 class PrintSleepBlocker {
   blockerId = null;
   get active() {
@@ -80,9 +321,10 @@ class PrinterEvents {
       type: "CONNECTED"
     });
   }
-  disconnected() {
+  disconnected(unexpected = false) {
     this.post({
-      type: "DISCONNECTED"
+      type: "DISCONNECTED",
+      unexpected
     });
   }
   status(status) {
@@ -132,11 +374,12 @@ class PrinterEvents {
       totalLayers
     });
   }
-  printFinished(mode, elapsedSeconds) {
+  printFinished(mode, elapsedSeconds, metrics) {
     this.post({
       type: "PRINT_FINISHED",
       mode,
-      elapsedSeconds
+      elapsedSeconds,
+      metrics
     });
   }
   printStopped(mode, status, clearSession) {
@@ -357,7 +600,7 @@ class PositionTracker {
 const MIN_TEST_DURATION_SECONDS = 20;
 const MAX_TEST_DURATION_SECONDS = 120;
 const SEGMENTS_PER_SECOND = 250;
-function clamp(value, minimum, maximum) {
+function clamp$1(value, minimum, maximum) {
   return Math.min(
     maximum,
     Math.max(minimum, value)
@@ -365,7 +608,7 @@ function clamp(value, minimum, maximum) {
 }
 function estimateTestDurationSeconds(segmentCount) {
   const estimated = segmentCount / SEGMENTS_PER_SECOND;
-  return clamp(
+  return clamp$1(
     estimated,
     MIN_TEST_DURATION_SECONDS,
     MAX_TEST_DURATION_SECONDS
@@ -379,38 +622,40 @@ function createPrintProgress({
   totalLayers,
   elapsedSeconds,
   estimatedDurationSeconds,
-  percentOverride
+  percentOverride,
+  etaSecondsOverride,
+  estimatedTotalSeconds,
+  estimateSource = null,
+  estimateConfidence = null,
+  isHeating = false
 }) {
   const safeTotalLines = Math.max(
     0,
     totalLines
   );
-  const safeCurrentLine = clamp(
+  const safeCurrentLine = clamp$1(
     currentLine,
     0,
     safeTotalLines
   );
   const calculatedPercent = safeTotalLines === 0 ? 100 : safeCurrentLine / safeTotalLines * 100;
-  const percent = clamp(
+  const percent = clamp$1(
     percentOverride ?? calculatedPercent,
     0,
     100
   );
-  let etaSeconds = 0;
+  let etaSeconds = etaSecondsOverride ?? 0;
   if (estimatedDurationSeconds !== void 0) {
     etaSeconds = Math.max(
       0,
       estimatedDurationSeconds - elapsedSeconds
     );
-  } else if (safeCurrentLine > 0 && safeCurrentLine < safeTotalLines) {
-    const secondsPerCommand = elapsedSeconds / safeCurrentLine;
-    etaSeconds = secondsPerCommand * (safeTotalLines - safeCurrentLine);
   }
   return {
     fileName,
     currentLine: safeCurrentLine,
     totalLines: safeTotalLines,
-    currentLayer: clamp(
+    currentLayer: clamp$1(
       currentLayer,
       totalLayers > 0 ? 1 : 0,
       Math.max(0, totalLayers)
@@ -427,7 +672,11 @@ function createPrintProgress({
     etaSeconds: Math.max(
       0,
       etaSeconds
-    )
+    ),
+    estimatedTotalSeconds: estimatedTotalSeconds ?? estimatedDurationSeconds ?? null,
+    estimateSource,
+    estimateConfidence,
+    isHeating
   };
 }
 function calculateTestFrame(path2, printableLines, totalLayers, elapsedMilliseconds, durationMilliseconds) {
@@ -435,7 +684,7 @@ function calculateTestFrame(path2, printableLines, totalLayers, elapsedMilliseco
     1,
     durationMilliseconds
   );
-  const ratio = clamp(
+  const ratio = clamp$1(
     elapsedMilliseconds / safeDuration,
     0,
     1
@@ -479,6 +728,86 @@ function calculateTestFrame(path2, printableLines, totalLayers, elapsedMilliseco
     position
   };
 }
+const LIVE_ETA_DEFAULTS = {
+  minimumActiveSeconds: 180,
+  minimumPredictedProgress: 0.03,
+  smoothingFactor: 0.08,
+  minimumCalibrationFactor: 0.5,
+  maximumCalibrationFactor: 3,
+  highConfidenceActiveSeconds: 1200,
+  highConfidenceProgress: 0.3
+};
+function clamp(value, minimum, maximum) {
+  return Math.min(
+    maximum,
+    Math.max(minimum, value)
+  );
+}
+function createLiveCalibrationState() {
+  return {
+    factor: 1,
+    sampleCount: 0
+  };
+}
+function updateLiveEta({
+  state,
+  actualPrintSeconds,
+  predictedPrintElapsedSeconds,
+  predictedPrintTotalSeconds,
+  baseSource,
+  baseConfidence
+}) {
+  const safeTotal = Math.max(
+    0,
+    predictedPrintTotalSeconds
+  );
+  const safePredictedElapsed = clamp(
+    predictedPrintElapsedSeconds,
+    0,
+    safeTotal
+  );
+  const progress = safeTotal > 0 ? safePredictedElapsed / safeTotal : 0;
+  const canCalibrate = actualPrintSeconds >= LIVE_ETA_DEFAULTS.minimumActiveSeconds && progress >= LIVE_ETA_DEFAULTS.minimumPredictedProgress && safePredictedElapsed > 0;
+  let nextState = state;
+  if (canCalibrate) {
+    const observedFactor = clamp(
+      actualPrintSeconds / safePredictedElapsed,
+      LIVE_ETA_DEFAULTS.minimumCalibrationFactor,
+      LIVE_ETA_DEFAULTS.maximumCalibrationFactor
+    );
+    const nextFactor = state.sampleCount === 0 ? 1 + (observedFactor - 1) * LIVE_ETA_DEFAULTS.smoothingFactor : state.factor + (observedFactor - state.factor) * LIVE_ETA_DEFAULTS.smoothingFactor;
+    nextState = {
+      factor: clamp(
+        nextFactor,
+        LIVE_ETA_DEFAULTS.minimumCalibrationFactor,
+        LIVE_ETA_DEFAULTS.maximumCalibrationFactor
+      ),
+      sampleCount: state.sampleCount + 1
+    };
+  }
+  const isLive = nextState.sampleCount > 0;
+  const confidence = !isLive ? baseConfidence : actualPrintSeconds >= LIVE_ETA_DEFAULTS.highConfidenceActiveSeconds && progress >= LIVE_ETA_DEFAULTS.highConfidenceProgress ? "high" : "medium";
+  return {
+    state: nextState,
+    remainingSeconds: Math.max(
+      0,
+      (safeTotal - safePredictedElapsed) * nextState.factor
+    ),
+    source: isLive ? "live" : baseSource,
+    confidence,
+    calibratedTotalPrintSeconds: safeTotal * nextState.factor
+  };
+}
+function stripGcodeLine(rawLine) {
+  const semicolonIndex = rawLine.indexOf(";");
+  const withoutComment = semicolonIndex >= 0 ? rawLine.slice(0, semicolonIndex) : rawLine;
+  const checksumIndex = withoutComment.indexOf("*");
+  const withoutChecksum = checksumIndex >= 0 ? withoutComment.slice(0, checksumIndex) : withoutComment;
+  return withoutChecksum.replace(/\([^)]*\)/g, "").replace(
+    /^\s*N\d+\s+/i,
+    ""
+  ).trim();
+}
 const NUMBERED_LAYER_PATTERN = /^\s*;\s*LAYER:\s*(-?\d+)/i;
 const LAYER_CHANGE_PATTERN = /^\s*;\s*LAYER_CHANGE\b/i;
 const Z_COMMENT_PATTERN = /^\s*;\s*Z:\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)/i;
@@ -506,14 +835,6 @@ function isLayerChangeMarker(line) {
 }
 function isZCommentMarker(line) {
   return Z_COMMENT_PATTERN.test(line);
-}
-function stripGcodeLine(rawLine) {
-  const withoutComment = rawLine.split(";")[0];
-  const withoutChecksum = withoutComment.split("*")[0];
-  return withoutChecksum.replace(
-    /^\s*N\d+\s+/i,
-    ""
-  ).trim();
 }
 function clampLayer(layer, totalLayers) {
   return Math.min(
@@ -857,6 +1178,14 @@ class PrintSessionManager {
       payload.lines,
       payload.totalLayers
     );
+    if (payload.timing.cumulativeSeconds.length !== commands.texts.length + 1) {
+      this.options.events.error(
+        new Error(
+          "The print timing model does not match the G-code commands."
+        )
+      );
+      return;
+    }
     const session = {
       ...createBaseSession(
         "real",
@@ -865,7 +1194,13 @@ class PrintSessionManager {
         payload.totalLayers
       ),
       mode: "real",
-      commands
+      commands,
+      timing: payload.timing,
+      calibration: createLiveCalibrationState(),
+      heatingCompletedAtActiveSeconds: null,
+      lastProgressEmitAtMs: 0,
+      lastCalibratedTotalSeconds: payload.timing.totalSeconds,
+      progressTimer: null
     };
     this.session = session;
     this.options.events.printStarted(
@@ -874,7 +1209,20 @@ class PrintSessionManager {
       commands.texts.length,
       payload.totalLayers
     );
-    this.emitProgress(session);
+    this.emitProgress(
+      session,
+      {
+        force: true
+      }
+    );
+    session.progressTimer = setInterval(
+      () => {
+        this.emitProgress(
+          session
+        );
+      },
+      250
+    );
     void this.realRunner.run(
       session
     );
@@ -1029,6 +1377,9 @@ class PrintSessionManager {
         session
       );
     } else {
+      this.clearRealProgressTimer(
+        session
+      );
       session.stopRequested = true;
       session.resumeResolver?.();
     }
@@ -1043,9 +1394,84 @@ class PrintSessionManager {
     if (this.session !== session) {
       return;
     }
+    const now = performance.now();
+    if (session.mode === "real" && !progressOptions?.force && now - session.lastProgressEmitAtMs < 1e3) {
+      return;
+    }
+    if (session.mode === "real") {
+      session.lastProgressEmitAtMs = now;
+    }
     const elapsedSeconds = getElapsedMilliseconds(
       session
     ) / 1e3;
+    let realTiming;
+    if (session.mode === "real") {
+      const timing = session.timing;
+      const predictedElapsed = timing.cumulativeSeconds[Math.min(
+        session.currentLine,
+        timing.cumulativeSeconds.length - 1
+      )];
+      const totalSeconds = Math.max(
+        0,
+        timing.totalSeconds
+      );
+      const heatingSeconds = Math.min(
+        totalSeconds,
+        Math.max(
+          0,
+          timing.heatingSeconds
+        )
+      );
+      const isHeating = heatingSeconds > 0 && predictedElapsed < heatingSeconds;
+      if (!isHeating && session.heatingCompletedAtActiveSeconds === null) {
+        session.heatingCompletedAtActiveSeconds = elapsedSeconds;
+      }
+      if (isHeating) {
+        realTiming = {
+          percentOverride: totalSeconds > 0 ? predictedElapsed / totalSeconds * 100 : 0,
+          etaSecondsOverride: Math.max(
+            0,
+            totalSeconds - heatingSeconds + Math.max(
+              0,
+              heatingSeconds - elapsedSeconds
+            )
+          ),
+          estimatedTotalSeconds: totalSeconds,
+          estimateSource: timing.source,
+          estimateConfidence: "low",
+          isHeating: true
+        };
+      } else {
+        const actualHeatingSeconds = session.heatingCompletedAtActiveSeconds ?? 0;
+        const live = updateLiveEta({
+          state: session.calibration,
+          actualPrintSeconds: Math.max(
+            0,
+            elapsedSeconds - actualHeatingSeconds
+          ),
+          predictedPrintElapsedSeconds: Math.max(
+            0,
+            predictedElapsed - heatingSeconds
+          ),
+          predictedPrintTotalSeconds: Math.max(
+            0,
+            totalSeconds - heatingSeconds
+          ),
+          baseSource: timing.source,
+          baseConfidence: session.currentLine === 0 ? "low" : timing.confidence
+        });
+        session.calibration = live.state;
+        session.lastCalibratedTotalSeconds = actualHeatingSeconds + live.calibratedTotalPrintSeconds;
+        realTiming = {
+          percentOverride: totalSeconds > 0 ? predictedElapsed / totalSeconds * 100 : 100,
+          etaSecondsOverride: live.remainingSeconds,
+          estimatedTotalSeconds: session.lastCalibratedTotalSeconds,
+          estimateSource: live.source,
+          estimateConfidence: live.confidence,
+          isHeating: false
+        };
+      }
+    }
     const progress = createPrintProgress({
       fileName: session.fileName,
       currentLine: session.currentLine,
@@ -1054,7 +1480,8 @@ class PrintSessionManager {
       totalLayers: session.totalLayers,
       elapsedSeconds,
       percentOverride: progressOptions?.percentOverride,
-      estimatedDurationSeconds: progressOptions?.estimatedDurationSeconds
+      estimatedDurationSeconds: progressOptions?.estimatedDurationSeconds,
+      ...realTiming
     });
     this.options.events.progress(
       progress
@@ -1065,6 +1492,11 @@ class PrintSessionManager {
       return;
     }
     pauseSessionClock(session);
+    if (session.mode === "real") {
+      this.clearRealProgressTimer(
+        session
+      );
+    }
     session.currentLine = session.totalLines;
     session.currentLayer = session.totalLayers;
     session.status = "idle";
@@ -1074,17 +1506,37 @@ class PrintSessionManager {
         percentOverride: 100,
         estimatedDurationSeconds: session.durationMs / 1e3
       } : {
-        percentOverride: 100
+        percentOverride: 100,
+        force: true
       }
+    );
+    const actualSeconds = session.elapsedBeforeRunMs / 1e3;
+    const originalEstimate = session.mode === "real" ? session.timing.totalSeconds : session.durationMs / 1e3;
+    const finalEstimate = session.mode === "real" ? session.lastCalibratedTotalSeconds : originalEstimate;
+    const absoluteError = Math.abs(
+      originalEstimate - actualSeconds
     );
     this.options.events.printFinished(
       session.mode,
-      session.elapsedBeforeRunMs / 1e3
+      actualSeconds,
+      {
+        originalEstimateSeconds: originalEstimate,
+        finalCalibratedEstimateSeconds: finalEstimate,
+        actualActiveSeconds: actualSeconds,
+        absoluteErrorSeconds: absoluteError,
+        percentageError: actualSeconds > 0 ? absoluteError / actualSeconds * 100 : null,
+        estimateSource: session.mode === "real" ? session.calibration.sampleCount > 0 ? "live" : session.timing.source : null
+      }
     );
   }
   completeStop(session, clearSession) {
     if (this.session !== session) {
       return;
+    }
+    if (session.mode === "real") {
+      this.clearRealProgressTimer(
+        session
+      );
     }
     session.status = "idle";
     const mode = clearSession ? null : session.mode;
@@ -1118,6 +1570,15 @@ class PrintSessionManager {
       this.testStopTimer
     );
     this.testStopTimer = null;
+  }
+  clearRealProgressTimer(session) {
+    if (session.progressTimer === null) {
+      return;
+    }
+    clearInterval(
+      session.progressTimer
+    );
+    session.progressTimer = null;
   }
 }
 function parseAxisValue(text, axis) {
@@ -1631,7 +2092,9 @@ class PrinterRuntime {
       )
     );
     await this.connection.disconnect();
-    this.events.disconnected();
+    this.events.disconnected(
+      false
+    );
   }
   async sendGcode(gcode) {
     try {
@@ -1735,7 +2198,9 @@ class PrinterRuntime {
             error
           );
         }
-        this.events.disconnected();
+        this.events.disconnected(
+          true
+        );
       }
     );
   }
@@ -1823,6 +2288,12 @@ function assertRealPrintPayload(value) {
   if (!Number.isInteger(print.totalLayers) || (print.totalLayers ?? -1) < 0) {
     throw new Error("Print payload contains an invalid layer count.");
   }
+  const timing = print.timing;
+  if (!timing || !(timing.cumulativeSeconds instanceof Float32Array) || timing.cumulativeSeconds.length < 1 || typeof timing.totalSeconds !== "number" || !Number.isFinite(timing.totalSeconds) || timing.totalSeconds < 0 || typeof timing.heatingSeconds !== "number" || !Number.isFinite(timing.heatingSeconds) || timing.heatingSeconds < 0 || timing.heatingSeconds > timing.totalSeconds || timing.source !== "slicer" && timing.source !== "motion" || timing.confidence !== "low" && timing.confidence !== "medium" && timing.confidence !== "high") {
+    throw new Error(
+      "Print payload contains an invalid timing model."
+    );
+  }
 }
 function assertTestPrintPayload(value) {
   if (!value || typeof value !== "object") {
@@ -1833,12 +2304,6 @@ function assertTestPrintPayload(value) {
   if (typeof print.fileName !== "string" || print.fileName.trim().length === 0 || !Number.isInteger(print.totalLayers) || (print.totalLayers ?? -1) < 0 || !Number.isInteger(print.printableLines) || (print.printableLines ?? -1) < 0 || !path2 || !(path2.coordinates instanceof Float32Array) || !(path2.commandIndexes instanceof Uint32Array) || !(path2.layers instanceof Uint32Array) || !(path2.extruding instanceof Uint8Array) || path2.coordinates.length !== path2.commandIndexes.length * 6 || path2.layers.length !== path2.commandIndexes.length || path2.extruding.length !== path2.commandIndexes.length) {
     throw new Error("Invalid test-print payload.");
   }
-}
-function assertTrustedSender(event, window) {
-  if (!window || window.isDestroyed() || event.sender !== window.webContents) {
-    throw new Error("Unauthorized printer request.");
-  }
-  return window;
 }
 function registerPrinterIpc({
   getWindow,
@@ -1957,10 +2422,10 @@ function isDevelopmentNavigationAllowed(url, developmentUrl) {
     return false;
   }
 }
-function createMainWindow$1(iconPath) {
+function createMainWindow$1(icon) {
   const window = new electron.BrowserWindow({
     title: "PrintInterface",
-    icon: iconPath,
+    icon,
     width: 1500,
     height: 950,
     minWidth: 1050,
@@ -2016,8 +2481,14 @@ function createMainWindow$1(iconPath) {
   }
   return window;
 }
-function createTray(iconPath, showMainWindow2) {
-  const tray2 = new electron.Tray(iconPath);
+function createTray(icon, showMainWindow2) {
+  const tray2 = new electron.Tray(
+    icon.resize({
+      width: 32,
+      height: 32,
+      quality: "best"
+    })
+  );
   tray2.setToolTip("PrintInterface");
   tray2.setContextMenu(
     electron.Menu.buildFromTemplate([
@@ -2036,13 +2507,384 @@ function createTray(iconPath, showMainWindow2) {
   tray2.on("double-click", showMainWindow2);
   return tray2;
 }
+const DEFAULT_NOTIFICATION_PREFERENCES = {
+  enabled: true,
+  printStarted: true,
+  printPaused: true,
+  printCompleted: true,
+  printStopped: true,
+  printerDisconnected: true,
+  printerErrors: true,
+  temperatureReached: false
+};
+const MAXIMUM_RECENT_FILES = 10;
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function parseRecentFiles(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(
+    (entry) => {
+      if (!isRecord(entry)) {
+        return false;
+      }
+      return typeof entry.path === "string" && path.isAbsolute(
+        entry.path
+      ) && typeof entry.name === "string" && entry.name.length > 0 && typeof entry.size === "number" && Number.isFinite(
+        entry.size
+      ) && entry.size >= 0 && typeof entry.lastOpenedAt === "number" && Number.isFinite(
+        entry.lastOpenedAt
+      );
+    }
+  ).slice(0, MAXIMUM_RECENT_FILES);
+}
+function parseNotificationPreferences(value) {
+  if (!isRecord(value)) {
+    return {
+      ...DEFAULT_NOTIFICATION_PREFERENCES
+    };
+  }
+  const defaults = DEFAULT_NOTIFICATION_PREFERENCES;
+  return Object.fromEntries(
+    Object.entries(defaults).map(
+      ([key, fallback]) => [
+        key,
+        typeof value[key] === "boolean" ? value[key] : fallback
+      ]
+    )
+  );
+}
+class AppSettingsStore {
+  constructor(filePath) {
+    this.filePath = filePath;
+  }
+  filePath;
+  snapshot = {
+    recentFiles: [],
+    notifications: {
+      ...DEFAULT_NOTIFICATION_PREFERENCES
+    }
+  };
+  writeChain = Promise.resolve();
+  async load() {
+    try {
+      const text = await node_fs.promises.readFile(
+        this.filePath,
+        "utf8"
+      );
+      const value = JSON.parse(text);
+      if (!isRecord(value)) {
+        return;
+      }
+      this.snapshot = {
+        recentFiles: parseRecentFiles(
+          value.recentFiles
+        ),
+        notifications: parseNotificationPreferences(
+          value.notifications
+        )
+      };
+    } catch (error) {
+      if (!isRecord(error) || error.code !== "ENOENT") {
+        console.error(
+          "Unable to load application settings.",
+          error
+        );
+      }
+    }
+  }
+  getSnapshot() {
+    return {
+      recentFiles: this.snapshot.recentFiles.map(
+        (entry) => ({
+          ...entry
+        })
+      ),
+      notifications: {
+        ...this.snapshot.notifications
+      }
+    };
+  }
+  async addRecentFile(entry) {
+    const normalizedPath = path.normalize(entry.path);
+    const remaining = this.snapshot.recentFiles.filter(
+      (item) => path.normalize(
+        item.path
+      ).toLowerCase() !== normalizedPath.toLowerCase()
+    );
+    this.snapshot.recentFiles = [
+      {
+        ...entry,
+        path: normalizedPath
+      },
+      ...remaining
+    ].slice(0, MAXIMUM_RECENT_FILES);
+    await this.persist();
+    return this.getSnapshot().recentFiles;
+  }
+  async removeRecentFile(filePath) {
+    const normalized = path.normalize(
+      filePath
+    ).toLowerCase();
+    this.snapshot.recentFiles = this.snapshot.recentFiles.filter(
+      (entry) => path.normalize(entry.path).toLowerCase() !== normalized
+    );
+    await this.persist();
+    return this.getSnapshot().recentFiles;
+  }
+  async clearRecentFiles() {
+    this.snapshot.recentFiles = [];
+    await this.persist();
+    return [];
+  }
+  async updateNotifications(update) {
+    this.snapshot.notifications = {
+      ...this.snapshot.notifications,
+      ...update
+    };
+    await this.persist();
+    return {
+      ...this.snapshot.notifications
+    };
+  }
+  persist() {
+    const snapshot = JSON.stringify(
+      this.snapshot,
+      null,
+      2
+    );
+    const directory = path.dirname(
+      this.filePath
+    );
+    const temporaryPath = `${this.filePath}.tmp`;
+    this.writeChain = this.writeChain.catch(
+      () => void 0
+    ).then(
+      async () => {
+        await node_fs.promises.mkdir(
+          directory,
+          {
+            recursive: true
+          }
+        );
+        await node_fs.promises.writeFile(
+          temporaryPath,
+          snapshot,
+          "utf8"
+        );
+        await node_fs.promises.rename(
+          temporaryPath,
+          this.filePath
+        );
+      }
+    );
+    return this.writeChain;
+  }
+}
+const TARGET_TOLERANCE_CELSIUS = 2;
+class NotificationService {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  fileName = null;
+  activePrint = false;
+  lastStatus = null;
+  hotend = {
+    current: 0,
+    target: 0,
+    notifiedTarget: null
+  };
+  bed = {
+    current: 0,
+    target: 0,
+    notifiedTarget: null
+  };
+  handle(event) {
+    switch (event.type) {
+      case "PRINT_STARTED": {
+        this.fileName = event.fileName;
+        this.activePrint = true;
+        this.lastStatus = "printing";
+        this.notify(
+          "printStarted",
+          "Print started",
+          event.fileName
+        );
+        break;
+      }
+      case "STATUS": {
+        this.handleStatus(
+          event.status
+        );
+        break;
+      }
+      case "PRINT_FINISHED": {
+        if (this.activePrint) {
+          this.notify(
+            "printCompleted",
+            "Print completed",
+            this.fileName ?? "The print completed successfully."
+          );
+        }
+        this.activePrint = false;
+        this.lastStatus = "idle";
+        break;
+      }
+      case "PRINT_STOPPED": {
+        if (this.activePrint) {
+          this.notify(
+            "printStopped",
+            "Print stopped",
+            this.fileName ?? "The active print was stopped."
+          );
+        }
+        this.activePrint = false;
+        this.lastStatus = event.status;
+        break;
+      }
+      case "PRINT_RESET": {
+        this.activePrint = false;
+        this.fileName = null;
+        this.lastStatus = event.status;
+        break;
+      }
+      case "DISCONNECTED": {
+        if (event.unexpected) {
+          this.notify(
+            "printerDisconnected",
+            "Printer disconnected",
+            this.activePrint && this.fileName ? `Connection lost while printing ${this.fileName}.` : "The printer connection was lost."
+          );
+        }
+        this.activePrint = false;
+        this.lastStatus = "disconnected";
+        break;
+      }
+      case "ERROR": {
+        this.notify(
+          "printerErrors",
+          "Printer error",
+          event.message
+        );
+        break;
+      }
+      case "TEMPERATURE": {
+        this.updateHeater(
+          "Hotend",
+          this.hotend,
+          event.hotend,
+          event.targetHotend
+        );
+        this.updateHeater(
+          "Bed",
+          this.bed,
+          event.bed,
+          event.targetBed
+        );
+        break;
+      }
+    }
+  }
+  handleStatus(status) {
+    if (status === this.lastStatus) {
+      return;
+    }
+    if (status === "paused") {
+      this.notify(
+        "printPaused",
+        "Print paused",
+        this.fileName ?? "The print is paused."
+      );
+    } else if (status === "printing" && this.lastStatus === "paused") {
+      this.notify(
+        "printPaused",
+        "Print resumed",
+        this.fileName ?? "The print has resumed."
+      );
+    }
+    this.lastStatus = status;
+  }
+  updateHeater(name, state, current, target) {
+    if (target !== void 0 && target !== state.target) {
+      state.target = target;
+      state.notifiedTarget = null;
+    }
+    if (current !== void 0) {
+      state.current = current;
+    }
+    if (state.target <= 0 || state.notifiedTarget === state.target || Math.abs(
+      state.current - state.target
+    ) > TARGET_TOLERANCE_CELSIUS) {
+      return;
+    }
+    state.notifiedTarget = state.target;
+    this.notify(
+      "temperatureReached",
+      `${name} temperature reached`,
+      `${Math.round(
+        state.current
+      )} °C / ${Math.round(
+        state.target
+      )} °C`
+    );
+  }
+  notify(preference, title, body) {
+    const settings = this.options.settings.getSnapshot().notifications;
+    const window = this.options.getWindow();
+    if (!settings.enabled || !settings[preference] || !electron.Notification.isSupported() || window && !window.isDestroyed() && window.isVisible() && window.isFocused()) {
+      return;
+    }
+    const notification = new electron.Notification({
+      title,
+      body,
+      icon: this.options.getIcon().resize({
+        width: 256,
+        height: 256,
+        quality: "best"
+      })
+    });
+    notification.on(
+      "click",
+      () => {
+        this.options.showWindow();
+      }
+    );
+    notification.show();
+  }
+}
 let mainWindow = null;
 let tray = null;
 let printerRuntime = null;
 let unregisterPrinterIpc = null;
+let unregisterDesktopIpc = null;
+let settingsStore = null;
+let notificationService = null;
+let appIcon = null;
 const sleepBlocker = new PrintSleepBlocker();
 function getAppIconPath() {
-  return electron.app.isPackaged ? path.join(process.resourcesPath, "tray-icon.png") : path.join(process.cwd(), "resources", "tray-icon.png");
+  return electron.app.isPackaged ? path.join(process.resourcesPath, "tray-icon.png") : path.join(
+    electron.app.getAppPath(),
+    "resources",
+    "tray-icon.png"
+  );
+}
+function getAppIcon() {
+  if (appIcon) {
+    return appIcon;
+  }
+  const icon = electron.nativeImage.createFromPath(
+    getAppIconPath()
+  );
+  if (icon.isEmpty()) {
+    throw new Error(
+      `Unable to load application icon: ${getAppIconPath()}`
+    );
+  }
+  appIcon = icon;
+  return icon;
 }
 function initialisePrinter() {
   if (printerRuntime) {
@@ -2050,6 +2892,9 @@ function initialisePrinter() {
   }
   printerRuntime = new PrinterRuntime({
     emit: (event) => {
+      notificationService?.handle(
+        event
+      );
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(PRINTER_IPC.event, event);
       }
@@ -2062,9 +2907,17 @@ function initialisePrinter() {
     getWindow: () => mainWindow,
     runtime: printerRuntime
   });
+  if (settingsStore && !unregisterDesktopIpc) {
+    unregisterDesktopIpc = registerDesktopIpc({
+      getWindow: () => mainWindow,
+      settings: settingsStore
+    });
+  }
 }
 function createMainWindow() {
-  const window = createMainWindow$1(getAppIconPath());
+  const window = createMainWindow$1(
+    getAppIcon()
+  );
   mainWindow = window;
   initialisePrinter();
   window.on("closed", () => {
@@ -2090,16 +2943,34 @@ if (!hasSingleInstanceLock) {
   electron.app.quit();
 } else {
   electron.app.on("second-instance", showMainWindow);
-  void electron.app.whenReady().then(() => {
+  void electron.app.whenReady().then(async () => {
     if (process.platform === "win32") {
       electron.app.setAppUserModelId("dk.patrick.PrintInterface");
     }
+    settingsStore = new AppSettingsStore(
+      path.join(
+        electron.app.getPath("userData"),
+        "settings.json"
+      )
+    );
+    await settingsStore.load();
+    notificationService = new NotificationService({
+      getWindow: () => mainWindow,
+      showWindow: showMainWindow,
+      getIcon: getAppIcon,
+      settings: settingsStore
+    });
     createMainWindow();
-    tray = createTray(getAppIconPath(), showMainWindow);
+    tray = createTray(
+      getAppIcon(),
+      showMainWindow
+    );
     electron.app.on("activate", showMainWindow);
   });
 }
 electron.app.on("before-quit", () => {
+  unregisterDesktopIpc?.();
+  unregisterDesktopIpc = null;
   unregisterPrinterIpc?.();
   unregisterPrinterIpc = null;
   void printerRuntime?.dispose();

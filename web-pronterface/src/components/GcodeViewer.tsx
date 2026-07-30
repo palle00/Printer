@@ -5,6 +5,9 @@ import {
 } from "react";
 import type { ParsedGcode } from "../types/gcode";
 import type { PrinterPosition } from "../types/printer";
+import type {
+  GcodeFeatureCategory,
+} from "../gcode/features";
 import { GcodeScene } from "./gcode-viewer/GcodeScene";
 
 interface GcodeViewerProps {
@@ -13,6 +16,13 @@ interface GcodeViewerProps {
   printedCommand: number;
   position: PrinterPosition;
   showNozzle: boolean;
+  featureVisibility:
+    Readonly<
+      Record<
+        GcodeFeatureCategory,
+        boolean
+      >
+    >;
 }
 
 export default function GcodeViewer({
@@ -21,6 +31,7 @@ export default function GcodeViewer({
   printedCommand,
   position,
   showNozzle,
+  featureVisibility,
 }: GcodeViewerProps) {
   const mountRef =
     useRef<HTMLDivElement | null>(
@@ -31,6 +42,8 @@ export default function GcodeViewer({
     useRef<GcodeScene | null>(
       null,
     );
+  const initialVisibility =
+    useRef(featureVisibility);
 
   const [
     buildProgress,
@@ -50,7 +63,10 @@ export default function GcodeViewer({
     }
 
     const scene =
-      new GcodeScene(mount);
+      new GcodeScene(
+        mount,
+        initialVisibility.current,
+      );
 
     sceneRef.current = scene;
 
@@ -134,6 +150,13 @@ export default function GcodeViewer({
       printedCommand,
     );
   }, [printedCommand]);
+
+  useEffect(() => {
+    sceneRef.current
+      ?.setFeatureVisibility(
+        featureVisibility,
+      );
+  }, [featureVisibility]);
 
   useEffect(() => {
     sceneRef.current?.setNozzle(

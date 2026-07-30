@@ -6,6 +6,10 @@ import type {
   PrintProgress,
   PrinterPosition,
 } from "../types/printer";
+import type {
+  EstimateConfidence,
+  EstimateSource,
+} from "../types/gcode";
 
 const MIN_TEST_DURATION_SECONDS = 20;
 const MAX_TEST_DURATION_SECONDS = 120;
@@ -24,6 +28,14 @@ interface CreateProgressOptions {
 
   estimatedDurationSeconds?: number;
   percentOverride?: number;
+  etaSecondsOverride?: number;
+  estimatedTotalSeconds?:
+    number | null;
+  estimateSource?:
+    EstimateSource | null;
+  estimateConfidence?:
+    EstimateConfidence | null;
+  isHeating?: boolean;
 }
 
 export interface TestFrame {
@@ -70,6 +82,11 @@ export function createPrintProgress({
   elapsedSeconds,
   estimatedDurationSeconds,
   percentOverride,
+  etaSecondsOverride,
+  estimatedTotalSeconds,
+  estimateSource = null,
+  estimateConfidence = null,
+  isHeating = false,
 }: CreateProgressOptions): PrintProgress {
   const safeTotalLines = Math.max(
     0,
@@ -97,7 +114,8 @@ export function createPrintProgress({
     100,
   );
 
-  let etaSeconds = 0;
+  let etaSeconds =
+    etaSecondsOverride ?? 0;
 
   if (
     estimatedDurationSeconds !==
@@ -108,21 +126,6 @@ export function createPrintProgress({
       estimatedDurationSeconds -
         elapsedSeconds,
     );
-  } else if (
-    safeCurrentLine > 0 &&
-    safeCurrentLine <
-      safeTotalLines
-  ) {
-    const secondsPerCommand =
-      elapsedSeconds /
-      safeCurrentLine;
-
-    etaSeconds =
-      secondsPerCommand *
-      (
-        safeTotalLines -
-        safeCurrentLine
-      );
   }
 
   return {
@@ -152,6 +155,13 @@ export function createPrintProgress({
       0,
       etaSeconds,
     ),
+    estimatedTotalSeconds:
+      estimatedTotalSeconds ??
+      estimatedDurationSeconds ??
+      null,
+    estimateSource,
+    estimateConfidence,
+    isHeating,
   };
 }
 

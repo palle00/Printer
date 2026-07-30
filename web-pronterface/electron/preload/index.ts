@@ -2,6 +2,7 @@ import {
   contextBridge,
   ipcRenderer,
   type IpcRendererEvent,
+  webUtils,
 } from "electron";
 
 import type {
@@ -20,6 +21,84 @@ import {
 import type {
   PrinterEvent,
 } from "../../src/types/printer";
+import {
+  DESKTOP_IPC,
+  type DesktopFileApi,
+  type DesktopSettingsApi,
+} from "../../src/types/desktop-files";
+import type {
+  NotificationPreferences,
+} from "../../src/types/settings";
+
+const fileApi: DesktopFileApi =
+  Object.freeze({
+    chooseGcodeFile() {
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.chooseGcodeFile,
+      );
+    },
+    readDroppedFile(file: File) {
+      const filePath =
+        webUtils.getPathForFile(file);
+
+      if (!filePath) {
+        return Promise.reject(
+          new Error(
+            "The dropped file has no local path.",
+          ),
+        );
+      }
+
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.readGcodePath,
+        filePath,
+      );
+    },
+    openRecentFile(path: string) {
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.readGcodePath,
+        path,
+      );
+    },
+    markOpened(path: string) {
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.markGcodeOpened,
+        path,
+      );
+    },
+    removeRecent(path: string) {
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.removeRecentFile,
+        path,
+      );
+    },
+    clearRecent() {
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.clearRecentFiles,
+      );
+    },
+  });
+
+const settingsApi:
+  DesktopSettingsApi =
+  Object.freeze({
+    get() {
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.getSettings,
+      );
+    },
+    updateNotifications(
+      preferences:
+        Partial<
+          NotificationPreferences
+        >,
+    ) {
+      return ipcRenderer.invoke(
+        DESKTOP_IPC.updateNotifications,
+        preferences,
+      );
+    },
+  });
 
 const printerApi: PrinterApi =
   Object.freeze({
@@ -151,6 +230,8 @@ const desktopApi: DesktopApi =
       }),
 
     printer: printerApi,
+    files: fileApi,
+    settings: settingsApi,
   });
 
 contextBridge.exposeInMainWorld(

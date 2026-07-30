@@ -1,6 +1,10 @@
 import type {
+  RealPrintTimingPayload,
   TestPrintPath,
 } from "../../types/printer-ipc";
+import type {
+  LiveCalibrationState,
+} from "../../print/liveEta";
 
 import type {
   PrintMode,
@@ -43,6 +47,19 @@ export interface RealSession
 
   commands:
     PreparedCommands;
+  timing:
+    RealPrintTimingPayload;
+  calibration:
+    LiveCalibrationState;
+  heatingCompletedAtActiveSeconds:
+    number | null;
+  lastProgressEmitAtMs: number;
+  lastCalibratedTotalSeconds:
+    number;
+  progressTimer:
+    ReturnType<
+      typeof setInterval
+    > | null;
 }
 
 export interface TestSession

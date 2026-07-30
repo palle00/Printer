@@ -12481,7 +12481,11 @@ const initialPrintProgress = {
   totalLayers: 0,
   percent: 0,
   elapsedSeconds: 0,
-  etaSeconds: 0
+  etaSeconds: 0,
+  estimatedTotalSeconds: null,
+  estimateSource: null,
+  estimateConfidence: null,
+  isHeating: false
 };
 const initialPrinterState = {
   connected: false,
@@ -12573,7 +12577,12 @@ function reducePrinterEvent(state, event) {
         return {
           ...state,
           mode: event.mode,
-          status: event.status
+          status: event.status,
+          progress: {
+            ...state.progress,
+            etaSeconds: 0,
+            isHeating: false
+          }
         };
       }
       return {
@@ -12691,7 +12700,8 @@ function usePrinter() {
       void window.desktop.printer.startPrint({
         fileName: gcode.fileName,
         lines: gcode.lines,
-        totalLayers: gcode.totalLayers
+        totalLayers: gcode.totalLayers,
+        timing: gcode.timing
       }).catch(reportError2);
     },
     [reportError2]
@@ -12749,19 +12759,156 @@ function usePrinter() {
     clearError
   };
 }
+const GCODE_FEATURES = [
+  {
+    id: "outer-wall",
+    name: "Outer walls",
+    color: "#ef4444",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "inner-wall",
+    name: "Inner walls",
+    color: "#f97316",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "infill",
+    name: "Infill",
+    color: "#eab308",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "solid-infill",
+    name: "Solid infill",
+    color: "#84cc16",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "top-surface",
+    name: "Top surfaces",
+    color: "#22c55e",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "bottom-surface",
+    name: "Bottom surfaces",
+    color: "#14b8a6",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "support",
+    name: "Supports",
+    color: "#06b6d4",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "support-interface",
+    name: "Support interfaces",
+    color: "#3b82f6",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "skirt",
+    name: "Skirts",
+    color: "#8b5cf6",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "brim",
+    name: "Brims",
+    color: "#d946ef",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "raft",
+    name: "Rafts",
+    color: "#ec4899",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "bridge",
+    name: "Bridges",
+    color: "#f59e0b",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "ironing",
+    name: "Ironing",
+    color: "#a3e635",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "custom",
+    name: "Custom paths",
+    color: "#c084fc",
+    defaultVisible: true,
+    extrusion: true
+  },
+  {
+    id: "travel",
+    name: "Travel",
+    color: "#64748b",
+    defaultVisible: false,
+    extrusion: false
+  },
+  {
+    id: "unknown",
+    name: "Unknown extrusion",
+    color: "#e5e7eb",
+    defaultVisible: true,
+    extrusion: true
+  }
+];
+const PRINTED_PATH_COLOR = "#00ff7f";
+new Map(
+  GCODE_FEATURES.map(
+    (feature, index) => [
+      feature.id,
+      index
+    ]
+  )
+);
+function getFeatureCategory(index) {
+  return GCODE_FEATURES[index]?.id ?? "unknown";
+}
+function createDefaultFeatureVisibility() {
+  return Object.fromEntries(
+    GCODE_FEATURES.map(
+      (feature) => [
+        feature.id,
+        feature.defaultVisible
+      ]
+    )
+  );
+}
 const COORDINATES_PER_SEGMENT = 6;
-const INITIAL_CAPACITY = 16384;
 class GcodeSegmentStore {
-  constructor(coordinates, commandIndexes, layers, extruding) {
+  constructor(coordinates, commandIndexes, layers, extruding, featureIndexes) {
     this.coordinates = coordinates;
     this.commandIndexes = commandIndexes;
     this.layers = layers;
     this.extruding = extruding;
+    this.featureIndexes = featureIndexes;
   }
   coordinates;
   commandIndexes;
   layers;
   extruding;
+  featureIndexes;
   get length() {
     return this.commandIndexes.length;
   }
@@ -12772,6 +12919,9 @@ class GcodeSegmentStore {
     const offset = index * COORDINATES_PER_SEGMENT;
     const extruding = this.extruding[index] !== 0;
     const layer = this.layers[index];
+    const feature = getFeatureCategory(
+      this.featureIndexes[index]
+    );
     const start = {
       x: this.coordinates[offset],
       y: this.coordinates[offset + 1],
@@ -12791,566 +12941,187 @@ class GcodeSegmentStore {
       end,
       layer,
       commandIndex: this.commandIndexes[index],
-      extruding
+      extruding,
+      feature
     };
   }
 }
-class GcodeSegmentStoreBuilder {
-  coordinates = new Float32Array(INITIAL_CAPACITY * COORDINATES_PER_SEGMENT);
-  commandIndexes = new Uint32Array(INITIAL_CAPACITY);
-  layers = new Uint32Array(INITIAL_CAPACITY);
-  extruding = new Uint8Array(INITIAL_CAPACITY);
-  count = 0;
-  append(startX, startY, startZ, endX, endY, endZ, layer, commandIndex, isExtruding) {
-    this.ensureCapacity(this.count + 1);
-    const offset = this.count * COORDINATES_PER_SEGMENT;
-    this.coordinates[offset] = startX;
-    this.coordinates[offset + 1] = startY;
-    this.coordinates[offset + 2] = startZ;
-    this.coordinates[offset + 3] = endX;
-    this.coordinates[offset + 4] = endY;
-    this.coordinates[offset + 5] = endZ;
-    this.commandIndexes[this.count] = Math.max(0, commandIndex);
-    this.layers[this.count] = Math.max(1, layer);
-    this.extruding[this.count] = isExtruding ? 1 : 0;
-    this.count++;
-  }
-  finish() {
-    return new GcodeSegmentStore(
-      this.coordinates.slice(0, this.count * COORDINATES_PER_SEGMENT),
-      this.commandIndexes.slice(0, this.count),
-      this.layers.slice(0, this.count),
-      this.extruding.slice(0, this.count)
-    );
-  }
-  ensureCapacity(requiredCapacity) {
-    if (requiredCapacity <= this.commandIndexes.length) {
-      return;
-    }
-    const nextCapacity = Math.max(
-      requiredCapacity,
-      this.commandIndexes.length * 2
-    );
-    const nextCoordinates = new Float32Array(nextCapacity * COORDINATES_PER_SEGMENT);
-    const nextCommandIndexes = new Uint32Array(nextCapacity);
-    const nextLayers = new Uint32Array(nextCapacity);
-    const nextExtruding = new Uint8Array(nextCapacity);
-    nextCoordinates.set(this.coordinates);
-    nextCommandIndexes.set(this.commandIndexes);
-    nextLayers.set(this.layers);
-    nextExtruding.set(this.extruding);
-    this.coordinates = nextCoordinates;
-    this.commandIndexes = nextCommandIndexes;
-    this.layers = nextLayers;
-    this.extruding = nextExtruding;
-  }
-}
-const NUMBERED_LAYER_PATTERN = /^\s*;\s*LAYER:\s*(-?\d+)/i;
-const LAYER_CHANGE_PATTERN = /^\s*;\s*LAYER_CHANGE\b/i;
-const Z_COMMENT_PATTERN = /^\s*;\s*Z:\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)/i;
-function detectLayerMarkerMode(lines) {
-  let hasLayerChange = false;
-  let hasZComment = false;
-  for (const line of lines) {
-    if (NUMBERED_LAYER_PATTERN.test(line)) {
-      return "numbered";
-    }
-    hasLayerChange ||= LAYER_CHANGE_PATTERN.test(line);
-    hasZComment ||= Z_COMMENT_PATTERN.test(line);
-  }
-  if (hasLayerChange) {
-    return "layer-change";
-  }
-  return hasZComment ? "z-comment" : "none";
-}
-function getNumberedLayer(line) {
-  const match = line.match(NUMBERED_LAYER_PATTERN);
-  return match ? Number(match[1]) + 1 : null;
-}
-function isLayerChangeMarker(line) {
-  return LAYER_CHANGE_PATTERN.test(line);
-}
-function isZCommentMarker(line) {
-  return Z_COMMENT_PATTERN.test(line);
-}
-const EPSILON = 1e-6;
-function removeCommentsAndMetadata(line) {
-  return line.replace(/\([^)]*\)/g, "").split(";")[0].split("*")[0].trim();
-}
-function parseCommand(rawLine) {
-  let line = removeCommentsAndMetadata(rawLine);
-  if (!line || line === "%") {
-    return null;
-  }
-  line = line.replace(/^N\d+\s*/i, "").trim();
-  const commandMatch = line.match(
-    /^([GMT]\d+(?:\.\d+)?)/i
-  );
-  if (!commandMatch) {
-    return null;
-  }
-  const command = commandMatch[1].toUpperCase();
-  const parameters = {};
-  const parameterRegex = /([A-Z])\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/gi;
-  let match;
-  while ((match = parameterRegex.exec(line)) !== null) {
-    const value = Number(match[2]);
-    switch (match[1].toUpperCase()) {
-      case "X":
-        parameters.x = value;
-        break;
-      case "Y":
-        parameters.y = value;
-        break;
-      case "Z":
-        parameters.z = value;
-        break;
-      case "E":
-        parameters.e = value;
-        break;
-      case "I":
-        parameters.i = value;
-        break;
-      case "J":
-        parameters.j = value;
-        break;
-      case "R":
-        parameters.r = value;
-        break;
-    }
-  }
-  return {
-    command,
-    parameters
-  };
-}
-function updateCommentLayer(rawLine, mode, currentLayer) {
-  if (mode === "numbered") {
-    const numberedLayer = getNumberedLayer(rawLine);
-    if (numberedLayer !== null) {
-      return Math.max(
-        1,
-        numberedLayer
-      );
-    }
-  }
-  if (mode === "layer-change" && isLayerChangeMarker(rawLine)) {
-    return currentLayer + 1;
-  }
-  if (mode === "z-comment" && isZCommentMarker(rawLine)) {
-    return currentLayer + 1;
-  }
-  return currentLayer;
-}
-function addLinearSegment(segments, start, end, layer, commandIndex, extruding) {
-  const moved = Math.abs(end.x - start.x) > EPSILON || Math.abs(end.y - start.y) > EPSILON || Math.abs(end.z - start.z) > EPSILON;
-  if (!moved) {
-    return;
-  }
-  segments.append(
-    start.x,
-    start.y,
-    start.z,
-    end.x,
-    end.y,
-    end.z,
-    layer,
-    commandIndex,
-    extruding
-  );
-}
-function getArcCenterFromRadius(startX, startY, endX, endY, radius, clockwise) {
-  const dx = endX - startX;
-  const dy = endY - startY;
-  const chordLength = Math.hypot(dx, dy);
-  const absoluteRadius = Math.abs(radius);
-  if (chordLength < EPSILON || chordLength > absoluteRadius * 2) {
-    return null;
-  }
-  const midpointX = (startX + endX) / 2;
-  const midpointY = (startY + endY) / 2;
-  const distanceFromMidpoint = Math.sqrt(
-    Math.max(
-      0,
-      absoluteRadius * absoluteRadius - chordLength * chordLength / 4
-    )
-  );
-  const perpendicularX = -dy / chordLength;
-  const perpendicularY = dx / chordLength;
-  let direction = clockwise ? -1 : 1;
-  if (radius < 0) {
-    direction *= -1;
-  }
-  return {
-    x: midpointX + perpendicularX * distanceFromMidpoint * direction,
-    y: midpointY + perpendicularY * distanceFromMidpoint * direction
-  };
-}
-function normalizeArcSweep(startAngle, endAngle, clockwise) {
-  let sweep = endAngle - startAngle;
-  if (clockwise) {
-    while (sweep >= 0) {
-      sweep -= Math.PI * 2;
-    }
-  } else {
-    while (sweep <= 0) {
-      sweep += Math.PI * 2;
-    }
-  }
-  return sweep;
-}
-function addArcSegments(segments, start, end, centerX, centerY, clockwise, layer, commandIndex, extruding) {
-  const radius = Math.hypot(
-    start.x - centerX,
-    start.y - centerY
-  );
-  if (radius < EPSILON) {
-    addLinearSegment(
-      segments,
-      start,
-      end,
-      layer,
-      commandIndex,
-      extruding
-    );
-    return;
-  }
-  const startAngle = Math.atan2(
-    start.y - centerY,
-    start.x - centerX
-  );
-  const endAngle = Math.atan2(
-    end.y - centerY,
-    end.x - centerX
-  );
-  const sweep = normalizeArcSweep(
-    startAngle,
-    endAngle,
-    clockwise
-  );
-  const arcLength = Math.abs(
-    sweep * radius
-  );
-  const arcSegmentCount = Math.max(
-    8,
-    Math.min(
-      200,
-      Math.ceil(arcLength / 1.5)
-    )
-  );
-  let previous = { ...start };
-  for (let index = 1; index <= arcSegmentCount; index++) {
-    const progress = index / arcSegmentCount;
-    const angle = startAngle + sweep * progress;
-    const next = {
-      x: centerX + Math.cos(angle) * radius,
-      y: centerY + Math.sin(angle) * radius,
-      z: start.z + (end.z - start.z) * progress,
-      e: start.e + (end.e - start.e) * progress
-    };
-    if (index === arcSegmentCount) {
-      next.x = end.x;
-      next.y = end.y;
-      next.z = end.z;
-      next.e = end.e;
-    }
-    addLinearSegment(
-      segments,
-      previous,
-      next,
-      layer,
-      commandIndex,
-      extruding
-    );
-    previous = next;
-  }
-}
-function parseGcode(fileName, text) {
-  const lines = text.split(/\r?\n/);
-  const segmentBuilder = new GcodeSegmentStoreBuilder();
-  const layerMarkerMode = detectLayerMarkerMode(lines);
-  const usesAutomaticLayers = layerMarkerMode === "none";
-  let absolutePositioning = true;
-  let absoluteExtrusion = true;
-  let unitScale = 1;
-  let currentLayer = layerMarkerMode === "layer-change" || layerMarkerMode === "z-comment" ? 0 : 1;
-  let highestLayer = 1;
-  let printableLines = 0;
-  let lastAutomaticLayerZ = null;
-  const position = {
-    x: 0,
-    y: 0,
-    z: 0,
-    e: 0
-  };
-  for (const rawLine of lines) {
-    currentLayer = updateCommentLayer(
-      rawLine,
-      layerMarkerMode,
-      currentLayer
-    );
-    highestLayer = Math.max(
-      highestLayer,
-      currentLayer
-    );
-    const parsed = parseCommand(rawLine);
-    if (!parsed) {
-      continue;
-    }
-    printableLines++;
-    const commandIndex = printableLines;
-    const { command, parameters } = parsed;
-    switch (command) {
-      case "G20": {
-        unitScale = 25.4;
-        continue;
-      }
-      case "G21": {
-        unitScale = 1;
-        continue;
-      }
-      case "G90": {
-        absolutePositioning = true;
-        continue;
-      }
-      case "G91": {
-        absolutePositioning = false;
-        continue;
-      }
-      case "M82": {
-        absoluteExtrusion = true;
-        continue;
-      }
-      case "M83": {
-        absoluteExtrusion = false;
-        continue;
-      }
-      case "G92": {
-        const { x, y, z, e } = parameters;
-        if (x !== void 0) {
-          position.x = x * unitScale;
-        }
-        if (y !== void 0) {
-          position.y = y * unitScale;
-        }
-        if (z !== void 0) {
-          position.z = z * unitScale;
-        }
-        if (e !== void 0) {
-          position.e = e * unitScale;
-        }
-        continue;
-      }
-    }
-    const isLinear = command === "G0" || command === "G00" || command === "G1" || command === "G01";
-    const isClockwiseArc = command === "G2" || command === "G02";
-    const isCounterClockwiseArc = command === "G3" || command === "G03";
-    if (!isLinear && !isClockwiseArc && !isCounterClockwiseArc) {
-      continue;
-    }
-    const start = { ...position };
-    const xParameter = parameters.x;
-    const yParameter = parameters.y;
-    const zParameter = parameters.z;
-    const eParameter = parameters.e;
-    const end = {
-      x: xParameter === void 0 ? position.x : absolutePositioning ? xParameter * unitScale : position.x + xParameter * unitScale,
-      y: yParameter === void 0 ? position.y : absolutePositioning ? yParameter * unitScale : position.y + yParameter * unitScale,
-      z: zParameter === void 0 ? position.z : absolutePositioning ? zParameter * unitScale : position.z + zParameter * unitScale,
-      e: eParameter === void 0 ? position.e : absoluteExtrusion ? eParameter * unitScale : position.e + eParameter * unitScale
-    };
-    const extrusionAmount = end.e - position.e;
-    const extruding = extrusionAmount > EPSILON;
-    if (usesAutomaticLayers && extruding) {
-      if (lastAutomaticLayerZ === null) {
-        lastAutomaticLayerZ = end.z;
-      } else if (end.z > lastAutomaticLayerZ + 0.01) {
-        currentLayer++;
-        highestLayer = Math.max(
-          highestLayer,
-          currentLayer
-        );
-        lastAutomaticLayerZ = end.z;
-      }
-    }
-    const segmentLayer = Math.max(
-      1,
-      currentLayer
-    );
-    highestLayer = Math.max(
-      highestLayer,
-      segmentLayer
-    );
-    if (isLinear) {
-      addLinearSegment(
-        segmentBuilder,
-        start,
-        end,
-        segmentLayer,
-        commandIndex,
-        extruding
-      );
-    } else {
-      const iParameter = parameters.i;
-      const jParameter = parameters.j;
-      const radiusParameter = parameters.r;
-      let center = null;
-      if (iParameter !== void 0 || jParameter !== void 0) {
-        center = {
-          x: start.x + (iParameter ?? 0) * unitScale,
-          y: start.y + (jParameter ?? 0) * unitScale
-        };
-      } else if (radiusParameter !== void 0) {
-        center = getArcCenterFromRadius(
-          start.x,
-          start.y,
-          end.x,
-          end.y,
-          radiusParameter * unitScale,
-          isClockwiseArc
-        );
-      }
-      if (center) {
-        addArcSegments(
-          segmentBuilder,
-          start,
-          end,
-          center.x,
-          center.y,
-          isClockwiseArc,
-          segmentLayer,
-          commandIndex,
-          extruding
-        );
-      } else {
-        addLinearSegment(
-          segmentBuilder,
-          start,
-          end,
-          segmentLayer,
-          commandIndex,
-          extruding
-        );
-      }
-    }
-    position.x = end.x;
-    position.y = end.y;
-    position.z = end.z;
-    position.e = end.e;
-  }
-  const segments = segmentBuilder.finish();
-  let hasExtrudingSegments = false;
-  for (let index = 0; index < segments.length; index++) {
-    if (segments.extruding[index] !== 0) {
-      hasExtrudingSegments = true;
-      break;
-    }
-  }
-  let minX = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  let minZ = Number.POSITIVE_INFINITY;
-  let maxZ = Number.NEGATIVE_INFINITY;
-  for (let index = 0; index < segments.length; index++) {
-    if (hasExtrudingSegments && segments.extruding[index] === 0) {
-      continue;
-    }
-    const offset = index * 6;
-    const startX = segments.coordinates[offset];
-    const startY = segments.coordinates[offset + 1];
-    const startZ = segments.coordinates[offset + 2];
-    const endX = segments.coordinates[offset + 3];
-    const endY = segments.coordinates[offset + 4];
-    const endZ = segments.coordinates[offset + 5];
-    minX = Math.min(
-      minX,
-      startX,
-      endX
-    );
-    maxX = Math.max(
-      maxX,
-      startX,
-      endX
-    );
-    minY = Math.min(
-      minY,
-      startY,
-      endY
-    );
-    maxY = Math.max(
-      maxY,
-      startY,
-      endY
-    );
-    minZ = Math.min(
-      minZ,
-      startZ,
-      endZ
-    );
-    maxZ = Math.max(
-      maxZ,
-      startZ,
-      endZ
-    );
-  }
-  if (!Number.isFinite(minX)) {
-    minX = 0;
-    maxX = 0;
-    minY = 0;
-    maxY = 0;
-    minZ = 0;
-    maxZ = 0;
-  }
-  return {
-    fileName,
-    lines,
-    segments,
-    totalLines: lines.length,
-    totalLayers: Math.max(
-      1,
-      highestLayer
+function parseGcodeInWorker(fileName, text, filePath, fileSize) {
+  const worker = new Worker(
+    new URL(
+      /* @vite-ignore */
+      "" + new URL("gcodeParser.worker-9Rjh6p5T.js", import.meta.url).href,
+      import.meta.url
     ),
-    printableLines,
-    minX,
-    maxX,
-    minY,
-    maxY,
-    minZ,
-    maxZ
+    {
+      type: "module"
+    }
+  );
+  let settled = false;
+  let rejectJob = null;
+  const promise = new Promise(
+    (resolve, reject) => {
+      rejectJob = reject;
+      worker.onmessage = (event) => {
+        settled = true;
+        worker.terminate();
+        if (event.data.error || !event.data.parsed) {
+          reject(
+            new Error(
+              event.data.error ?? "G-code parsing failed."
+            )
+          );
+          return;
+        }
+        const parsed = event.data.parsed;
+        const serialized = parsed.segments;
+        parsed.segments = new GcodeSegmentStore(
+          serialized.coordinates,
+          serialized.commandIndexes,
+          serialized.layers,
+          serialized.extruding,
+          serialized.featureIndexes
+        );
+        resolve(parsed);
+      };
+      worker.onerror = (event) => {
+        settled = true;
+        worker.terminate();
+        reject(
+          new Error(
+            event.message || "G-code parsing failed."
+          )
+        );
+      };
+    }
+  );
+  worker.postMessage({
+    fileName,
+    text,
+    filePath,
+    fileSize
+  });
+  return {
+    promise,
+    cancel() {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      worker.terminate();
+      rejectJob?.(
+        new Error(
+          "G-code parsing was cancelled."
+        )
+      );
+    }
   };
 }
-function useGcode() {
+const SUPPORTED_FILE_PATTERN = /\.(?:gcode|gco|gc|g)$/i;
+function getErrorMessage(error2) {
+  return error2 instanceof Error ? error2.message : String(error2);
+}
+function useGcode({
+  hasActivePrint
+}) {
   const loadGeneration = reactExports.useRef(0);
-  const [gcode, setGcode] = reactExports.useState(null);
+  const parseJob = reactExports.useRef(
+    null
+  );
+  const [gcode, setGcode] = reactExports.useState(
+    null
+  );
+  const [recentFiles, setRecentFiles] = reactExports.useState([]);
   const [isLoading, setIsLoading] = reactExports.useState(false);
   const [error2, setError] = reactExports.useState(null);
-  const loadFile = reactExports.useCallback(
+  const [
+    staleRecentPath,
+    setStaleRecentPath
+  ] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    let active = true;
+    void window.desktop.settings.get().then((settings) => {
+      if (active) {
+        setRecentFiles(
+          settings.recentFiles
+        );
+      }
+    }).catch((settingsError) => {
+      if (active) {
+        setError(
+          getErrorMessage(
+            settingsError
+          )
+        );
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+  reactExports.useEffect(
+    () => () => {
+      parseJob.current?.cancel();
+    },
+    []
+  );
+  const confirmReplacement = reactExports.useCallback(() => {
+    if (!gcode && !hasActivePrint) {
+      return true;
+    }
+    return window.confirm(
+      hasActivePrint ? "A print is active. Loading another file will replace the current preview. Continue?" : "Loading another file will replace the current preview and its controls. Continue?"
+    );
+  }, [
+    gcode,
+    hasActivePrint
+  ]);
+  const acceptFile = reactExports.useCallback(
     async (file) => {
       const generation = ++loadGeneration.current;
       setIsLoading(true);
       setError(null);
-      setGcode(null);
+      setStaleRecentPath(null);
       try {
-        const text = await file.text();
+        if (!file.text.trim()) {
+          throw new Error(
+            "The selected G-code file is empty."
+          );
+        }
+        await new Promise(
+          (resolve) => {
+            window.setTimeout(
+              resolve,
+              0
+            );
+          }
+        );
+        parseJob.current?.cancel();
+        const job = parseGcodeInWorker(
+          file.name,
+          file.text,
+          file.path,
+          file.size
+        );
+        parseJob.current = job;
+        const parsed = await job.promise;
+        parseJob.current = null;
         if (generation !== loadGeneration.current) {
           return;
         }
-        if (!text.trim()) {
-          throw new Error("The selected file is empty.");
-        }
-        const parsed = parseGcode(file.name, text);
+        setGcode(parsed);
+        const updated = await window.desktop.files.markOpened(file.path);
         if (generation === loadGeneration.current) {
-          setGcode(parsed);
+          setRecentFiles(updated);
         }
       } catch (loadError) {
-        if (generation !== loadGeneration.current) {
-          return;
+        if (generation === loadGeneration.current) {
+          setError(
+            getErrorMessage(
+              loadError
+            )
+          );
         }
-        setGcode(null);
-        setError(
-          loadError instanceof Error ? loadError.message : String(loadError)
-        );
       } finally {
         if (generation === loadGeneration.current) {
           setIsLoading(false);
@@ -13359,42 +13130,141 @@ function useGcode() {
     },
     []
   );
-  const handleFileInput = reactExports.useCallback(
-    async (event) => {
-      const file = event.target.files?.[0];
-      if (!file) {
+  const chooseFile = reactExports.useCallback(async () => {
+    if (!confirmReplacement()) {
+      return;
+    }
+    setError(null);
+    try {
+      const file = await window.desktop.files.chooseGcodeFile();
+      if (file) {
+        await acceptFile(file);
+      }
+    } catch (loadError) {
+      setError(
+        getErrorMessage(loadError)
+      );
+    }
+  }, [
+    acceptFile,
+    confirmReplacement
+  ]);
+  const loadDroppedFile = reactExports.useCallback(
+    async (file) => {
+      if (!SUPPORTED_FILE_PATTERN.test(
+        file.name
+      )) {
+        setError(
+          "Drop a G-code, GCO, GC, or G file."
+        );
         return;
       }
-      await loadFile(file);
-      event.target.value = "";
+      if (!confirmReplacement()) {
+        return;
+      }
+      try {
+        const data = await window.desktop.files.readDroppedFile(file);
+        await acceptFile(data);
+      } catch (loadError) {
+        setError(
+          getErrorMessage(
+            loadError
+          )
+        );
+      }
     },
-    [loadFile]
+    [
+      acceptFile,
+      confirmReplacement
+    ]
   );
+  const openRecentFile = reactExports.useCallback(
+    async (filePath) => {
+      if (!confirmReplacement()) {
+        return;
+      }
+      try {
+        const data = await window.desktop.files.openRecentFile(
+          filePath
+        );
+        await acceptFile(data);
+      } catch (loadError) {
+        setStaleRecentPath(
+          filePath
+        );
+        setError(
+          getErrorMessage(
+            loadError
+          )
+        );
+      }
+    },
+    [
+      acceptFile,
+      confirmReplacement
+    ]
+  );
+  const removeRecentFile = reactExports.useCallback(
+    async (filePath) => {
+      const updated = await window.desktop.files.removeRecent(filePath);
+      setRecentFiles(updated);
+      setStaleRecentPath(
+        (current) => current === filePath ? null : current
+      );
+    },
+    []
+  );
+  const clearRecentFiles = reactExports.useCallback(async () => {
+    setRecentFiles(
+      await window.desktop.files.clearRecent()
+    );
+    setStaleRecentPath(null);
+  }, []);
   const clearFile = reactExports.useCallback(() => {
     loadGeneration.current++;
+    parseJob.current?.cancel();
+    parseJob.current = null;
     setGcode(null);
     setIsLoading(false);
     setError(null);
   }, []);
+  const clearError = reactExports.useCallback(() => {
+    setError(null);
+  }, []);
   return {
     gcode,
+    recentFiles,
+    staleRecentPath,
     isLoading,
     error: error2,
-    loadFile,
-    handleFileInput,
-    clearFile
+    chooseFile,
+    loadDroppedFile,
+    openRecentFile,
+    removeRecentFile,
+    clearRecentFiles,
+    clearFile,
+    clearError
   };
 }
 function usePrinterDashboard() {
   const printer = usePrinter();
+  const hasActivePrint = printer.status === "printing" || printer.status === "pausing" || printer.status === "paused" || printer.status === "stopping";
   const {
     gcode,
+    recentFiles,
+    staleRecentPath,
     isLoading,
     error: fileError,
-    handleFileInput,
-    clearFile
-  } = useGcode();
-  const hasActivePrint = printer.status === "printing" || printer.status === "pausing" || printer.status === "paused" || printer.status === "stopping";
+    chooseFile,
+    loadDroppedFile,
+    openRecentFile,
+    removeRecentFile,
+    clearRecentFiles,
+    clearFile,
+    clearError: clearFileError
+  } = useGcode({
+    hasActivePrint
+  });
   const canStartPrint = printer.connected && printer.status === "idle" && !printer.isTestMode && gcode !== null;
   const canStartTestPrint = !printer.connected && !hasActivePrint && gcode !== null;
   reactExports.useEffect(() => {
@@ -13441,8 +13311,14 @@ function usePrinterDashboard() {
   return {
     printer,
     gcode,
+    recentFiles,
+    staleRecentPath,
     isLoading,
-    handleFileInput,
+    chooseFile,
+    loadDroppedFile,
+    openRecentFile,
+    removeRecentFile,
+    clearRecentFiles,
     clearFile,
     hasActivePrint,
     canStartPrint,
@@ -13452,7 +13328,7 @@ function usePrinterDashboard() {
     displayProgress: printer.progress,
     displayPosition: printer.position,
     error: printer.error ?? fileError ?? null,
-    clearError: printer.error ? printer.clearError : void 0,
+    clearError: printer.error ? printer.clearError : fileError ? clearFileError : void 0,
     toggleConnection,
     startPrint,
     startTestPrint,
@@ -13484,11 +13360,22 @@ function AppHeader({
   connected,
   hasActivePrint,
   onToggleConnection,
-  onStopPrint
+  onStopPrint,
+  onOpenNotifications
 }) {
   return /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "bg-[#121620] border-b border-gray-800 px-4 py-3 flex items-center justify-between gap-4", children: [
     /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center gap-3", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "font-black tracking-widest text-xs", children: "PRINTER CONTROL" }) }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: onOpenNotifications,
+          title: "Notification settings",
+          className: "border border-gray-800 bg-[#181d2c] px-3 py-1.5 text-xs text-gray-400 hover:text-white",
+          children: "Alerts"
+        }
+      ),
       /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-2 bg-[#181d2c] px-3 py-1.5 rounded border border-gray-800 text-xs", children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
           "span",
@@ -13577,62 +13464,141 @@ function ControlButton({
     }
   );
 }
+function formatFileSize(bytes) {
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(
+      1,
+      Math.round(bytes / 1024)
+    )} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 function FilePanel({
   gcode,
+  recentFiles,
+  staleRecentPath,
   isLoading,
   hasActivePrint,
-  onFileChange,
+  onChooseFile,
+  onOpenRecent,
+  onRemoveRecent,
+  onClearRecent,
   onClearFile
 }) {
-  return /* @__PURE__ */ jsxRuntimeExports.jsx(Panel, { title: "File", children: !gcode ? /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "border-2 border-dashed border-gray-800 hover:border-blue-500/50 bg-[#181d2c]/50 rounded-lg p-6 flex flex-col items-center justify-center cursor-pointer", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-400", children: isLoading ? "Reading file..." : "Select a .gcode file" }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      "input",
-      {
-        type: "file",
-        accept: ".gcode,.g",
-        onChange: onFileChange,
-        disabled: isLoading || hasActivePrint,
-        className: "hidden"
-      }
-    )
-  ] }) : /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-[#181d2c] rounded p-3 border border-gray-800 font-mono", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-xs text-blue-400 font-bold truncate", children: gcode.fileName }),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-3 gap-2 border-t border-gray-800 pt-3 mt-3 text-[10px] text-gray-400", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          Stat,
-          {
-            label: "Lines",
-            value: gcode.totalLines.toLocaleString()
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          Stat,
-          {
-            label: "Layers",
-            value: gcode.totalLayers.toString()
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          Stat,
-          {
-            label: "Paths",
-            value: gcode.segments.length.toLocaleString()
-          }
-        )
-      ] })
-    ] }),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(Panel, { title: "File", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsxs(
       "button",
       {
         type: "button",
-        onClick: onClearFile,
-        disabled: hasActivePrint,
-        className: "w-full bg-[#181d2c] border border-gray-800 rounded py-2 text-xs hover:bg-gray-800 disabled:text-gray-700 disabled:cursor-not-allowed",
-        children: "Remove file"
+        onClick: onChooseFile,
+        disabled: isLoading,
+        className: "w-full border-2 border-dashed border-gray-800 hover:border-blue-500/50 bg-[#181d2c]/50 rounded-lg px-4 py-4 flex items-center justify-center gap-2 text-xs text-gray-400 disabled:cursor-wait",
+        children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: "..." }),
+          isLoading ? "Reading G-code..." : gcode ? "Open another file" : "Open G-code file"
+        ]
       }
-    )
+    ),
+    gcode && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "space-y-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "bg-[#181d2c] rounded p-3 border border-gray-800 font-mono", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "flex items-center gap-2 text-xs text-blue-400 font-bold", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: gcode.fileName }) }),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-3 gap-2 border-t border-gray-800 pt-3 mt-3 text-[10px] text-gray-400", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Stat,
+            {
+              label: "Lines",
+              value: gcode.totalLines.toLocaleString()
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Stat,
+            {
+              label: "Layers",
+              value: gcode.totalLayers.toString()
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            Stat,
+            {
+              label: "Paths",
+              value: gcode.segments.length.toLocaleString()
+            }
+          )
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "button",
+        {
+          type: "button",
+          onClick: onClearFile,
+          disabled: hasActivePrint,
+          className: "w-full bg-[#181d2c] border border-gray-800 rounded py-2 text-xs hover:bg-gray-800 disabled:text-gray-700 disabled:cursor-not-allowed",
+          children: "Remove file"
+        }
+      )
+    ] }),
+    recentFiles.length > 0 && /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "border-t border-gray-800 pt-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-2 flex items-center justify-between", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx("h3", { className: "text-[10px] font-bold uppercase text-gray-500", children: "Recent files" }),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: onClearRecent,
+            title: "Clear recent files",
+            className: "p-1 text-gray-500 hover:text-gray-200",
+            children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: "Clear" })
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-1", children: recentFiles.map(
+        (file) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+          "div",
+          {
+            className: `group flex items-center gap-1 rounded border px-2 py-1.5 ${staleRecentPath === file.path ? "border-red-500/50 bg-red-950/20" : "border-gray-800 bg-[#181d2c]"}`,
+            children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "button",
+                {
+                  type: "button",
+                  onClick: () => onOpenRecent(
+                    file.path
+                  ),
+                  disabled: isLoading,
+                  title: file.path,
+                  className: "min-w-0 flex-1 text-left disabled:opacity-50",
+                  children: [
+                    /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block truncate text-[11px] text-gray-300", children: file.name }),
+                    /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "flex items-center gap-1 text-[9px] text-gray-600", children: [
+                      new Date(
+                        file.lastOpenedAt
+                      ).toLocaleString(),
+                      " · ",
+                      formatFileSize(
+                        file.size
+                      )
+                    ] })
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  type: "button",
+                  onClick: () => onRemoveRecent(
+                    file.path
+                  ),
+                  title: "Remove from recent files",
+                  className: "shrink-0 p-1 text-gray-600 hover:text-gray-200",
+                  children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { "aria-hidden": "true", children: "×" })
+                }
+              )
+            ]
+          },
+          file.path
+        )
+      ) })
+    ] })
   ] }) });
 }
 const FilePanel$1 = reactExports.memo(FilePanel);
@@ -13671,8 +13637,14 @@ function PrintJobPanel({
   onStop,
   onReset
 }) {
+  const hasSession = progress.fileName !== null;
+  const idleEstimate = gcode?.statistics.estimatedDurationSeconds ?? null;
+  const etaValue = hasSession ? progress.etaSeconds : idleEstimate;
+  const estimateSource = progress.estimateSource ?? gcode?.statistics.estimateSource ?? null;
+  const estimateConfidence = progress.estimateConfidence ?? gcode?.statistics.estimateConfidence ?? null;
   return /* @__PURE__ */ jsxRuntimeExports.jsxs(Panel, { title: "Print Job", children: [
     isTestMode && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3 px-2 py-1.5 rounded bg-purple-950/50 border border-purple-800 text-purple-300 text-[10px] font-mono uppercase tracking-wider", children: "Simulation mode" }),
+    progress.isHeating && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mb-3 border border-yellow-800 bg-yellow-950/30 px-2 py-1.5 text-[10px] font-mono uppercase text-yellow-300", children: "Heating to target" }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-3xl font-black font-mono text-white mb-3", children: [
       progress.percent.toFixed(1),
       "%"
@@ -13706,8 +13678,8 @@ function PrintJobPanel({
         Stat,
         {
           label: "ETA",
-          value: progress.currentLine > 0 ? formatDuration(
-            progress.etaSeconds
+          value: etaValue !== null ? formatDuration(
+            etaValue
           ) : "--:--"
         }
       ),
@@ -13718,6 +13690,12 @@ function PrintJobPanel({
           value: `${progress.currentLayer} / ${progress.totalLayers || gcode?.totalLayers || 0}`
         }
       )
+    ] }),
+    estimateSource && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-3 text-[9px] font-mono uppercase text-gray-600", children: [
+      hasSession ? "Estimate" : "Pre-print estimate",
+      ": ",
+      estimateSource === "slicer" ? "slicer metadata" : estimateSource === "motion" ? "motion model" : "live calibrated",
+      estimateConfidence ? ` · ${estimateConfidence} confidence` : ""
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "text-[10px] font-mono text-gray-500 mb-3", children: [
       progress.currentLine.toLocaleString(),
@@ -23437,6 +23415,18 @@ class BufferAttribute extends EventDispatcher {
     this.dispatchEvent({ type: "dispose" });
   }
 }
+class Uint8BufferAttribute extends BufferAttribute {
+  /**
+   * Constructs a new buffer attribute.
+   *
+   * @param {(Array<number>|Uint8Array)} array - The array holding the attribute data.
+   * @param {number} itemSize - The item size.
+   * @param {boolean} [normalized=false] - Whether the data are normalized or not.
+   */
+  constructor(array, itemSize, normalized) {
+    super(new Uint8Array(array), itemSize, normalized);
+  }
+}
 class Uint16BufferAttribute extends BufferAttribute {
   /**
    * Constructs a new buffer attribute.
@@ -31486,12 +31476,11 @@ function WebGLMorphtargets(gl, capabilities, textures) {
     const morphTargetsCount = morphAttribute !== void 0 ? morphAttribute.length : 0;
     let entry = morphTextures.get(geometry);
     if (entry === void 0 || entry.count !== morphTargetsCount) {
-      let disposeTexture2 = function() {
+      let disposeTexture = function() {
         texture.dispose();
         morphTextures.delete(geometry);
-        geometry.removeEventListener("dispose", disposeTexture2);
+        geometry.removeEventListener("dispose", disposeTexture);
       };
-      var disposeTexture = disposeTexture2;
       if (entry !== void 0) entry.texture.dispose();
       const hasMorphPosition = geometry.morphAttributes.position !== void 0;
       const hasMorphNormals = geometry.morphAttributes.normal !== void 0;
@@ -31550,7 +31539,7 @@ function WebGLMorphtargets(gl, capabilities, textures) {
         size: new Vector2(width, height)
       };
       morphTextures.set(geometry, entry);
-      geometry.addEventListener("dispose", disposeTexture2);
+      geometry.addEventListener("dispose", disposeTexture);
     }
     if (object.isInstancedMesh === true && object.morphTexture !== null) {
       program.getUniforms().setValue(gl, "morphTexture", object.morphTexture, textures);
@@ -41141,13 +41130,10 @@ function buildOffsets(counts, valuesPerItem) {
   }
   return offsets;
 }
-async function buildToolpathData(gcode, signal, onProgress, options = {}) {
-  const includeTravels = options.includeTravels ?? false;
+async function buildToolpathData(gcode, signal, onProgress) {
   const layerCount = Math.max(1, gcode.totalLayers) + 1;
-  const extrusionCounts = new Uint32Array(layerCount);
-  const travelCounts = new Uint32Array(layerCount);
-  let extrusionCount = 0;
-  let travelCount = 0;
+  const layerCounts = new Uint32Array(layerCount);
+  let segmentCount = 0;
   for (let sourceIndex = 0; sourceIndex < gcode.segments.length; sourceIndex++) {
     const coordinateOffset = sourceIndex * 6;
     const coordinates = gcode.segments.coordinates;
@@ -41163,13 +41149,8 @@ async function buildToolpathData(gcode, signal, onProgress, options = {}) {
       coordinates[coordinateOffset + 4],
       coordinates[coordinateOffset + 5]
     )) {
-      if (gcode.segments.extruding[sourceIndex] !== 0) {
-        extrusionCount++;
-        extrusionCounts[layer]++;
-      } else if (includeTravels) {
-        travelCount++;
-        travelCounts[layer]++;
-      }
+      segmentCount++;
+      layerCounts[layer]++;
     }
     if ((sourceIndex + 1) % BUILD_CHUNK_SIZE === 0) {
       throwIfAborted(signal);
@@ -41181,12 +41162,10 @@ async function buildToolpathData(gcode, signal, onProgress, options = {}) {
   }
   throwIfAborted(signal);
   const commandIndexes = new Float32Array(gcode.segments.length * 2);
-  const extrusionIndices = new Uint32Array(extrusionCount * 2);
-  const travelIndices = includeTravels ? new Uint32Array(travelCount * 2) : null;
-  const layerIndexOffsets = buildOffsets(extrusionCounts, 2);
-  const travelLayerIndexOffsets = includeTravels ? buildOffsets(travelCounts, 2) : null;
-  let extrusionOutput = 0;
-  let travelOutput = 0;
+  const categoryIndexes = new Uint8Array(gcode.segments.length * 2);
+  const indices = new Uint32Array(segmentCount * 2);
+  const layerIndexOffsets = buildOffsets(layerCounts, 2);
+  let output = 0;
   let lastReportedPercent = 20;
   for (let sourceIndex = 0; sourceIndex < gcode.segments.length; sourceIndex++) {
     const sourceOffset = sourceIndex * 6;
@@ -41209,21 +41188,15 @@ async function buildToolpathData(gcode, signal, onProgress, options = {}) {
     }
     const vertexIndex = sourceIndex * 2;
     const commandIndex = gcode.segments.commandIndexes[sourceIndex];
+    const categoryIndex = gcode.segments.featureIndexes[sourceIndex];
     commandIndexes[vertexIndex] = commandIndex;
     commandIndexes[vertexIndex + 1] = commandIndex;
-    if (gcode.segments.extruding[sourceIndex] === 0) {
-      if (travelIndices) {
-        const offset = travelOutput * 2;
-        travelIndices[offset] = vertexIndex;
-        travelIndices[offset + 1] = vertexIndex + 1;
-        travelOutput++;
-      }
-    } else {
-      const offset = extrusionOutput * 2;
-      extrusionIndices[offset] = vertexIndex;
-      extrusionIndices[offset + 1] = vertexIndex + 1;
-      extrusionOutput++;
-    }
+    categoryIndexes[vertexIndex] = categoryIndex;
+    categoryIndexes[vertexIndex + 1] = categoryIndex;
+    const offset = output * 2;
+    indices[offset] = vertexIndex;
+    indices[offset + 1] = vertexIndex + 1;
+    output++;
     if ((sourceIndex + 1) % BUILD_CHUNK_SIZE === 0 || sourceIndex + 1 === gcode.segments.length) {
       throwIfAborted(signal);
       const percent = 20 + Math.round((sourceIndex + 1) / gcode.segments.length * 80);
@@ -41239,10 +41212,9 @@ async function buildToolpathData(gcode, signal, onProgress, options = {}) {
   return {
     positions: gcode.segments.coordinates,
     commandIndexes,
-    extrusionIndices,
-    layerIndexOffsets,
-    travelIndices,
-    travelLayerIndexOffsets
+    categoryIndexes,
+    indices,
+    layerIndexOffsets
   };
 }
 function disposeMaterial(material) {
@@ -41508,9 +41480,17 @@ class SceneRenderer {
     this.requestRender();
   };
 }
+const CATEGORY_COLOR_SHADER = GCODE_FEATURES.map(
+  (_feature, index) => `if (category < ${index + 0.5}) return categoryColor${index};`
+).join("\n");
+const CATEGORY_VISIBILITY_SHADER = GCODE_FEATURES.map(
+  (_feature, index) => `if (category < ${index + 0.5}) return categoryVisible${index};`
+).join("\n");
 const VERTEX_SHADER = `
   attribute float commandIndex;
+  attribute float categoryIndex;
   varying float vPrinted;
+  varying float vCategory;
   uniform float printedCommand;
   uniform vec2 modelCenter;
   uniform float minimumZ;
@@ -41522,55 +41502,61 @@ const VERTEX_SHADER = `
       modelCenter.y - position.y
     );
     vPrinted = step(commandIndex, printedCommand + 0.5);
+    vCategory = categoryIndex;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(scenePosition, 1.0);
   }
 `;
 const FRAGMENT_SHADER = `
   varying float vPrinted;
-  uniform vec3 plannedColor;
+  varying float vCategory;
   uniform vec3 printedColor;
+  ${GCODE_FEATURES.map(
+  (_feature, index) => `uniform vec3 categoryColor${index};`
+).join("\n")}
+  ${GCODE_FEATURES.map(
+  (_feature, index) => `uniform float categoryVisible${index};`
+).join("\n")}
+
+  vec3 getCategoryColor(float category) {
+    ${CATEGORY_COLOR_SHADER}
+    return categoryColor${GCODE_FEATURES.length - 1};
+  }
+
+  float getCategoryVisibility(float category) {
+    ${CATEGORY_VISIBILITY_SHADER}
+    return categoryVisible${GCODE_FEATURES.length - 1};
+  }
 
   void main() {
-    vec3 color = mix(plannedColor, printedColor, vPrinted);
-    float alpha = mix(0.48, 1.0, vPrinted);
+    if (getCategoryVisibility(vCategory) < 0.5) {
+      discard;
+    }
+
+    vec3 color = mix(
+      getCategoryColor(vCategory),
+      printedColor,
+      vPrinted
+    );
+    float alpha = mix(0.72, 1.0, vPrinted);
     gl_FragColor = vec4(color, alpha);
   }
 `;
-const TRAVEL_VERTEX_SHADER = `
-  uniform vec2 modelCenter;
-  uniform float minimumZ;
-
-  void main() {
-    vec3 scenePosition = vec3(
-      position.x - modelCenter.x,
-      position.z - minimumZ,
-      modelCenter.y - position.y
-    );
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(scenePosition, 1.0);
-  }
-`;
-const TRAVEL_FRAGMENT_SHADER = `
-  void main() {
-    gl_FragColor = vec4(0.58, 0.64, 0.72, 1.0);
-  }
-`;
 class ToolpathRenderer {
-  constructor(scene, requestRender, buildOptions = {}) {
+  constructor(scene, requestRender, initialVisibility) {
     this.scene = scene;
     this.requestRender = requestRender;
-    this.buildOptions = buildOptions;
+    this.featureVisibility = initialVisibility;
   }
   scene;
   requestRender;
-  buildOptions;
   bed = null;
   grid = null;
-  extrusionLines = null;
-  travelLines = null;
+  toolpathLines = null;
+  toolpathMaterial = null;
   layerIndexOffsets = new Uint32Array(0);
-  travelLayerIndexOffsets = new Uint32Array(0);
   previewLayer = 1;
   printedCommand = 0;
+  featureVisibility;
   disposed = false;
   async setGcode(gcode, layout, signal, onProgress) {
     if (this.disposed) {
@@ -41580,7 +41566,10 @@ class ToolpathRenderer {
     this.disposeEnvironment();
     this.bed = createBed(layout);
     this.grid = createGrid(layout);
-    this.scene.add(this.bed, this.grid);
+    this.scene.add(
+      this.bed,
+      this.grid
+    );
     this.requestRender();
     if (!gcode) {
       return;
@@ -41588,98 +41577,130 @@ class ToolpathRenderer {
     const data = await buildToolpathData(
       gcode,
       signal,
-      onProgress,
-      this.buildOptions
+      onProgress
     );
     if (signal.aborted || this.disposed) {
       return;
     }
     this.layerIndexOffsets = data.layerIndexOffsets;
-    this.travelLayerIndexOffsets = data.travelLayerIndexOffsets ?? new Uint32Array(0);
-    if (data.extrusionIndices.length > 0) {
+    if (data.indices.length > 0) {
       const geometry = new BufferGeometry();
       geometry.setAttribute(
         "position",
-        new BufferAttribute(data.positions, 3)
+        new BufferAttribute(
+          data.positions,
+          3
+        )
       );
       geometry.setIndex(
-        new BufferAttribute(data.extrusionIndices, 1)
+        new BufferAttribute(
+          data.indices,
+          1
+        )
       );
       geometry.setAttribute(
         "commandIndex",
-        new BufferAttribute(data.commandIndexes, 1)
+        new BufferAttribute(
+          data.commandIndexes,
+          1
+        )
+      );
+      geometry.setAttribute(
+        "categoryIndex",
+        new Uint8BufferAttribute(
+          data.categoryIndexes,
+          1
+        )
       );
       geometry.setDrawRange(0, 0);
+      const uniforms = {
+        printedCommand: {
+          value: this.printedCommand
+        },
+        modelCenter: {
+          value: new Vector2(
+            layout.centerX,
+            layout.centerY
+          )
+        },
+        minimumZ: {
+          value: layout.minZ
+        },
+        printedColor: {
+          value: new Color(
+            PRINTED_PATH_COLOR
+          )
+        }
+      };
+      GCODE_FEATURES.forEach(
+        (feature, index) => {
+          uniforms[`categoryColor${index}`] = {
+            value: new Color(
+              feature.color
+            )
+          };
+          uniforms[`categoryVisible${index}`] = {
+            value: this.featureVisibility[feature.id] ? 1 : 0
+          };
+        }
+      );
       const material = new ShaderMaterial({
         vertexShader: VERTEX_SHADER,
         fragmentShader: FRAGMENT_SHADER,
-        uniforms: {
-          printedCommand: { value: this.printedCommand },
-          modelCenter: {
-            value: new Vector2(layout.centerX, layout.centerY)
-          },
-          minimumZ: { value: layout.minZ },
-          plannedColor: { value: new Color(2450411) },
-          printedColor: { value: new Color(16738816) }
-        },
+        uniforms,
         transparent: true,
         depthWrite: true
       });
-      this.extrusionLines = new LineSegments(geometry, material);
-      this.extrusionLines.frustumCulled = false;
-      this.extrusionLines.renderOrder = 1;
-      this.scene.add(this.extrusionLines);
-    }
-    if (data.travelIndices && data.travelIndices.length > 0) {
-      const geometry = new BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new BufferAttribute(data.positions, 3)
-      );
-      geometry.setIndex(
-        new BufferAttribute(data.travelIndices, 1)
-      );
-      geometry.setDrawRange(0, 0);
-      this.travelLines = new LineSegments(
+      const lines = new LineSegments(
         geometry,
-        new ShaderMaterial({
-          vertexShader: TRAVEL_VERTEX_SHADER,
-          fragmentShader: TRAVEL_FRAGMENT_SHADER,
-          uniforms: {
-            modelCenter: {
-              value: new Vector2(layout.centerX, layout.centerY)
-            },
-            minimumZ: { value: layout.minZ }
-          }
-        })
+        material
       );
-      this.travelLines.visible = false;
-      this.travelLines.frustumCulled = false;
-      this.scene.add(this.travelLines);
+      lines.frustumCulled = false;
+      lines.renderOrder = 1;
+      this.toolpathLines = lines;
+      this.toolpathMaterial = material;
+      this.scene.add(lines);
     }
-    this.updateLayerDrawRanges();
+    this.updateLayerDrawRange();
     this.requestRender();
   }
   setPreviewLayer(layer) {
-    const nextLayer = Math.max(1, Math.floor(layer));
+    const nextLayer = Math.max(
+      1,
+      Math.floor(layer)
+    );
     if (nextLayer === this.previewLayer) {
       return;
     }
     this.previewLayer = nextLayer;
-    this.updateLayerDrawRanges();
+    this.updateLayerDrawRange();
     this.requestRender();
   }
   setPrintedCommand(command) {
-    const nextCommand = Math.max(0, Math.floor(command));
+    const nextCommand = Math.max(
+      0,
+      Math.floor(command)
+    );
     if (nextCommand === this.printedCommand) {
       return;
     }
     this.printedCommand = nextCommand;
-    if (this.extrusionLines) {
-      const material = this.extrusionLines.material;
-      material.uniforms.printedCommand.value = nextCommand;
+    if (this.toolpathMaterial) {
+      this.toolpathMaterial.uniforms.printedCommand.value = nextCommand;
       this.requestRender();
     }
+  }
+  setFeatureVisibility(visibility) {
+    this.featureVisibility = visibility;
+    if (!this.toolpathMaterial) {
+      return;
+    }
+    GCODE_FEATURES.forEach(
+      (feature, index) => {
+        this.toolpathMaterial.uniforms[`categoryVisible${index}`].value = visibility[feature.id] ? 1 : 0;
+      }
+    );
+    this.requestRender();
   }
   dispose() {
     if (this.disposed) {
@@ -41689,31 +41710,24 @@ class ToolpathRenderer {
     this.disposeToolpaths();
     this.disposeEnvironment();
   }
-  updateLayerDrawRanges() {
-    if (this.extrusionLines) {
-      const layer = Math.min(
-        this.previewLayer,
-        this.layerIndexOffsets.length - 1
-      );
-      const count = layer >= 0 ? this.layerIndexOffsets[layer] : 0;
-      this.extrusionLines.geometry.setDrawRange(0, count);
+  updateLayerDrawRange() {
+    if (!this.toolpathLines) {
+      return;
     }
-    if (this.travelLines) {
-      const layer = Math.min(
-        this.previewLayer,
-        this.travelLayerIndexOffsets.length - 1
-      );
-      const count = layer >= 0 ? this.travelLayerIndexOffsets[layer] : 0;
-      this.travelLines.geometry.setDrawRange(0, count);
-    }
+    const layer = Math.min(
+      this.previewLayer,
+      this.layerIndexOffsets.length - 1
+    );
+    const count = layer >= 0 ? this.layerIndexOffsets[layer] : 0;
+    this.toolpathLines.geometry.setDrawRange(0, count);
   }
   disposeToolpaths() {
-    disposeObject(this.extrusionLines);
-    disposeObject(this.travelLines);
-    this.extrusionLines = null;
-    this.travelLines = null;
+    disposeObject(
+      this.toolpathLines
+    );
+    this.toolpathLines = null;
+    this.toolpathMaterial = null;
     this.layerIndexOffsets = new Uint32Array(0);
-    this.travelLayerIndexOffsets = new Uint32Array(0);
   }
   disposeEnvironment() {
     disposeObject(this.bed);
@@ -41728,7 +41742,7 @@ class GcodeScene {
   toolpathRenderer;
   nozzleRenderer;
   disposed = false;
-  constructor(mount) {
+  constructor(mount, featureVisibility) {
     this.sceneRenderer = new SceneRenderer(mount);
     this.cameraController = new CameraController(
       this.sceneRenderer.renderer,
@@ -41739,7 +41753,8 @@ class GcodeScene {
     );
     this.toolpathRenderer = new ToolpathRenderer(
       this.sceneRenderer.scene,
-      this.sceneRenderer.requestRender
+      this.sceneRenderer.requestRender,
+      featureVisibility
     );
     this.nozzleRenderer = new NozzleRenderer(
       this.sceneRenderer.scene,
@@ -41787,6 +41802,14 @@ class GcodeScene {
       command
     );
   }
+  setFeatureVisibility(visibility) {
+    if (this.disposed) {
+      return;
+    }
+    this.toolpathRenderer.setFeatureVisibility(
+      visibility
+    );
+  }
   setNozzle(position, visible) {
     if (this.disposed) {
       return;
@@ -41812,7 +41835,8 @@ function GcodeViewer({
   previewLayer,
   printedCommand,
   position,
-  showNozzle
+  showNozzle,
+  featureVisibility
 }) {
   const mountRef = reactExports.useRef(
     null
@@ -41820,6 +41844,7 @@ function GcodeViewer({
   const sceneRef = reactExports.useRef(
     null
   );
+  const initialVisibility = reactExports.useRef(featureVisibility);
   const [
     buildProgress,
     setBuildProgress
@@ -41833,7 +41858,10 @@ function GcodeViewer({
     if (!mount) {
       return;
     }
-    const scene = new GcodeScene(mount);
+    const scene = new GcodeScene(
+      mount,
+      initialVisibility.current
+    );
     sceneRef.current = scene;
     return () => {
       scene.dispose();
@@ -41889,6 +41917,11 @@ function GcodeViewer({
     );
   }, [printedCommand]);
   reactExports.useEffect(() => {
+    sceneRef.current?.setFeatureVisibility(
+      featureVisibility
+    );
+  }, [featureVisibility]);
+  reactExports.useEffect(() => {
     sceneRef.current?.setNozzle(
       position,
       showNozzle
@@ -41929,6 +41962,279 @@ function GcodeViewer({
     buildError && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute left-3 right-3 top-3 rounded border border-red-900 bg-red-950/90 px-3 py-2 text-xs text-red-300", children: buildError })
   ] });
 }
+function setEveryCategory(value) {
+  return Object.fromEntries(
+    GCODE_FEATURES.map(
+      (feature) => [
+        feature.id,
+        value
+      ]
+    )
+  );
+}
+function PreviewLegend({
+  statistics,
+  visibility,
+  onChange
+}) {
+  const statisticsByCategory = new Map(
+    statistics.map(
+      (entry) => [
+        entry.category,
+        entry
+      ]
+    )
+  );
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "absolute right-3 top-3 z-10 w-72 max-w-[calc(100%-1.5rem)] border border-gray-700 bg-[#121620]/95 shadow-xl", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer select-none px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-300", children: "Path categories" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "border-t border-gray-800 p-3", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-3 grid grid-cols-2 gap-1", children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              onChange(
+                setEveryCategory(
+                  true
+                )
+              );
+            },
+            className: "border border-gray-700 bg-[#181d2c] px-2 py-1 text-[9px] text-gray-300 hover:bg-gray-800",
+            children: "Show all"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              onChange(
+                setEveryCategory(
+                  false
+                )
+              );
+            },
+            className: "border border-gray-700 bg-[#181d2c] px-2 py-1 text-[9px] text-gray-300 hover:bg-gray-800",
+            children: "Hide all"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              onChange(
+                Object.fromEntries(
+                  GCODE_FEATURES.map(
+                    (feature) => [
+                      feature.id,
+                      feature.extrusion
+                    ]
+                  )
+                )
+              );
+            },
+            className: "border border-gray-700 bg-[#181d2c] px-2 py-1 text-[9px] text-gray-300 hover:bg-gray-800",
+            children: "Extrusion only"
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              onChange(
+                Object.fromEntries(
+                  GCODE_FEATURES.map(
+                    (feature) => [
+                      feature.id,
+                      feature.defaultVisible
+                    ]
+                  )
+                )
+              );
+            },
+            className: "border border-gray-700 bg-[#181d2c] px-2 py-1 text-[9px] text-gray-300 hover:bg-gray-800",
+            children: "Defaults"
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "max-h-64 space-y-1 overflow-y-auto pr-1", children: GCODE_FEATURES.map(
+        (feature) => {
+          const entry = statisticsByCategory.get(
+            feature.id
+          );
+          return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+            "label",
+            {
+              className: "grid cursor-pointer grid-cols-[auto_auto_1fr_auto] items-center gap-2 py-0.5 text-[9px] font-mono text-gray-400",
+              children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "input",
+                  {
+                    type: "checkbox",
+                    checked: visibility[feature.id],
+                    onChange: (event) => {
+                      onChange({
+                        ...visibility,
+                        [feature.id]: event.target.checked
+                      });
+                    },
+                    className: "accent-blue-500"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "span",
+                  {
+                    className: "h-2.5 w-2.5",
+                    style: {
+                      backgroundColor: feature.color
+                    }
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "truncate", children: feature.name }),
+                /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "text-right text-gray-500", children: [
+                  (entry?.pathCount ?? 0).toLocaleString(),
+                  entry && entry.movementPercentage > 0 && ` / ${entry.movementPercentage.toFixed(1)}%`
+                ] })
+              ]
+            },
+            feature.id
+          );
+        }
+      ) }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-2 border-t border-gray-800 pt-2 text-[9px] text-gray-600", children: "Percentages are movement distance." })
+    ] })
+  ] });
+}
+function formatDistance(millimeters) {
+  if (millimeters === null || !Number.isFinite(millimeters)) {
+    return "-";
+  }
+  return millimeters >= 1e3 ? `${(millimeters / 1e3).toFixed(2)} m` : `${millimeters.toFixed(1)} mm`;
+}
+function formatTemperature(value) {
+  return value === null ? "-" : `${value.toFixed(0)} C`;
+}
+function Statistic({
+  label,
+  value
+}) {
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "text-gray-500", children: label }),
+    /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "mt-0.5 text-gray-200", children: value })
+  ] });
+}
+function PreviewStatistics({
+  statistics,
+  layerCount
+}) {
+  const dimensions = statistics.widthMm !== null && statistics.depthMm !== null && statistics.heightMm !== null ? `${statistics.widthMm.toFixed(1)} x ${statistics.depthMm.toFixed(1)} x ${statistics.heightMm.toFixed(1)} mm` : "-";
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs("details", { className: "absolute left-3 top-3 z-10 w-80 max-w-[calc(100%-1.5rem)] border border-gray-700 bg-[#121620]/95 shadow-xl", children: [
+    /* @__PURE__ */ jsxRuntimeExports.jsx("summary", { className: "cursor-pointer select-none px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-gray-300", children: "Preview statistics" }),
+    /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "grid grid-cols-2 gap-x-4 gap-y-2 border-t border-gray-800 p-3 text-[9px] font-mono", children: [
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Estimated duration",
+          value: statistics.estimatedDurationSeconds === null ? "-" : formatDuration(
+            statistics.estimatedDurationSeconds
+          )
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Estimate",
+          value: `${statistics.estimateSource} / ${statistics.estimateConfidence}`
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Filament",
+          value: formatDistance(
+            statistics.filamentLengthMm
+          )
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Weight",
+          value: `${statistics.filamentWeightGrams.toFixed(1)} g`
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Model W x D x H",
+          value: dimensions
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Layers",
+          value: layerCount.toLocaleString()
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Travel distance",
+          value: formatDistance(
+            statistics.travelDistanceMm
+          )
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Extrusion movement",
+          value: formatDistance(
+            statistics.extrusionDistanceMm
+          )
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Retractions",
+          value: statistics.retractionCount.toLocaleString()
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Heating estimate",
+          value: formatDuration(
+            statistics.heatingEstimateSeconds
+          )
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Maximum hotend",
+          value: formatTemperature(
+            statistics.maximumHotendTemperatureCelsius
+          )
+        }
+      ),
+      /* @__PURE__ */ jsxRuntimeExports.jsx(
+        Statistic,
+        {
+          label: "Maximum bed",
+          value: formatTemperature(
+            statistics.maximumBedTemperatureCelsius
+          )
+        }
+      )
+    ] })
+  ] });
+}
 function PreviewPanel({
   gcode,
   progress,
@@ -41945,6 +42251,12 @@ function PreviewPanel({
     followPrinterLayer,
     setFollowPrinterLayer
   ] = reactExports.useState(true);
+  const [
+    featureVisibility,
+    setFeatureVisibility
+  ] = reactExports.useState(
+    createDefaultFeatureVisibility
+  );
   reactExports.useEffect(() => {
     setPreviewLayer(
       gcode?.totalLayers ?? 1
@@ -42068,9 +42380,27 @@ function PreviewPanel({
           previewLayer,
           printedCommand: progress.currentLine,
           position,
-          showNozzle: connected || isTestMode
+          showNozzle: connected || isTestMode,
+          featureVisibility
         }
       ),
+      gcode && /* @__PURE__ */ jsxRuntimeExports.jsxs(jsxRuntimeExports.Fragment, { children: [
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          PreviewStatistics,
+          {
+            statistics: gcode.statistics,
+            layerCount: gcode.totalLayers
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          PreviewLegend,
+          {
+            statistics: gcode.statistics.featureBreakdown,
+            visibility: featureVisibility,
+            onChange: setFeatureVisibility
+          }
+        )
+      ] }),
       !gcode && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute inset-0 flex items-center justify-center pointer-events-none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-mono text-gray-600", children: "Load a G-code file to display the 3D preview" }) }),
       isTestMode && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "absolute top-3 left-3 pointer-events-none", children: /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "bg-purple-950/80 border border-purple-700 text-purple-300 rounded px-3 py-1.5 text-[10px] font-mono uppercase tracking-wider", children: "Test simulation" }) }),
       (connected || isTestMode) && gcode && /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "absolute bottom-3 left-3 pointer-events-none bg-black/70 border border-gray-800 rounded px-3 py-2 text-[10px] font-mono text-gray-400", children: [
@@ -42089,10 +42419,15 @@ function PreviewPanel({
       ] })
     ] }),
     /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "shrink-0 bg-[#181d2c] border-t border-gray-800 px-4 py-2 flex justify-between text-[10px] font-mono", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex gap-4", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-blue-400", children: "● PLANNED" }),
-        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-orange-400", children: "● PRINTED" })
-      ] }),
+      /* @__PURE__ */ jsxRuntimeExports.jsx("div", { children: /* @__PURE__ */ jsxRuntimeExports.jsx(
+        "span",
+        {
+          style: {
+            color: PRINTED_PATH_COLOR
+          },
+          children: "● PRINTED"
+        }
+      ) }),
       /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-gray-500", children: gcode ? `${gcode.segments.length.toLocaleString()} segments` : "No file loaded" })
     ] })
   ] });
@@ -42597,104 +42932,361 @@ function TerminalPanel({
   ] });
 }
 const TerminalPanel$1 = reactExports.memo(TerminalPanel);
+const DEFAULT_NOTIFICATION_PREFERENCES = {
+  enabled: true,
+  printStarted: true,
+  printPaused: true,
+  printCompleted: true,
+  printStopped: true,
+  printerDisconnected: true,
+  printerErrors: true,
+  temperatureReached: false
+};
+const OPTIONS = [
+  {
+    key: "printStarted",
+    label: "Print started"
+  },
+  {
+    key: "printPaused",
+    label: "Print paused or resumed"
+  },
+  {
+    key: "printCompleted",
+    label: "Print completed"
+  },
+  {
+    key: "printStopped",
+    label: "Print stopped"
+  },
+  {
+    key: "printerDisconnected",
+    label: "Unexpected disconnection"
+  },
+  {
+    key: "printerErrors",
+    label: "Printer errors"
+  },
+  {
+    key: "temperatureReached",
+    label: "Target temperature reached"
+  }
+];
+function NotificationSettings({
+  open,
+  onClose
+}) {
+  const [
+    preferences,
+    setPreferences
+  ] = reactExports.useState(
+    DEFAULT_NOTIFICATION_PREFERENCES
+  );
+  const [error2, setError] = reactExports.useState(null);
+  reactExports.useEffect(() => {
+    if (!open) {
+      return;
+    }
+    let active = true;
+    void window.desktop.settings.get().then((settings) => {
+      if (active) {
+        setPreferences(
+          settings.notifications
+        );
+        setError(null);
+      }
+    }).catch((loadError) => {
+      if (active) {
+        setError(
+          loadError instanceof Error ? loadError.message : String(loadError)
+        );
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [open]);
+  if (!open) {
+    return null;
+  }
+  const update = (key, value) => {
+    const previous = preferences;
+    setPreferences({
+      ...preferences,
+      [key]: value
+    });
+    setError(null);
+    void window.desktop.settings.updateNotifications({
+      [key]: value
+    }).then(setPreferences).catch((saveError) => {
+      setPreferences(previous);
+      setError(
+        saveError instanceof Error ? saveError.message : String(saveError)
+      );
+    });
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      className: "absolute inset-0 z-[90] grid place-items-center bg-black/70 p-4",
+      role: "presentation",
+      onMouseDown: (event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      },
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "section",
+        {
+          role: "dialog",
+          "aria-modal": "true",
+          "aria-labelledby": "notification-settings-title",
+          className: "w-full max-w-sm rounded-lg border border-gray-700 bg-[#121620] p-4 shadow-2xl",
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-4 flex items-center justify-between", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "h2",
+                {
+                  id: "notification-settings-title",
+                  className: "text-xs font-bold uppercase text-gray-300",
+                  children: "Desktop notifications"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  type: "button",
+                  onClick: onClose,
+                  "aria-label": "Close notification settings",
+                  className: "px-2 py-1 text-lg text-gray-500 hover:text-white",
+                  children: "×"
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("label", { className: "mb-3 flex items-center justify-between border-b border-gray-800 pb-3 text-xs font-semibold text-gray-200", children: [
+              "Enable notifications",
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "input",
+                {
+                  type: "checkbox",
+                  checked: preferences.enabled,
+                  onChange: (event) => update(
+                    "enabled",
+                    event.target.checked
+                  )
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "space-y-2", children: OPTIONS.map(
+              ({ key, label }) => /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                "label",
+                {
+                  className: "flex items-center justify-between text-xs text-gray-400",
+                  children: [
+                    label,
+                    /* @__PURE__ */ jsxRuntimeExports.jsx(
+                      "input",
+                      {
+                        type: "checkbox",
+                        disabled: !preferences.enabled,
+                        checked: preferences[key],
+                        onChange: (event) => update(
+                          key,
+                          event.target.checked
+                        )
+                      }
+                    )
+                  ]
+                },
+                key
+              )
+            ) }),
+            error2 && /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-3 text-xs text-red-400", children: error2 })
+          ]
+        }
+      )
+    }
+  );
+}
 function App() {
   const dashboard = usePrinterDashboard();
-  return /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "app-shell h-dvh overflow-hidden bg-[#0b0e14] text-gray-300 flex flex-col", children: [
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      AppHeader$1,
-      {
-        status: dashboard.displayStatus,
-        isTestMode: dashboard.isTestMode,
-        connected: dashboard.printer.connected,
-        hasActivePrint: dashboard.hasActivePrint,
-        onToggleConnection: dashboard.toggleConnection,
-        onStopPrint: dashboard.stopPrint
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsx(
-      ErrorBanner,
-      {
-        error: dashboard.error,
-        onClear: dashboard.clearError
-      }
-    ),
-    /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "app-main min-h-0 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden", children: [
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "app-column min-h-0 lg:col-span-3 flex flex-col gap-4 overflow-y-auto", children: [
+  const dragDepth = reactExports.useRef(0);
+  const [isDraggingFile, setIsDraggingFile] = reactExports.useState(false);
+  const [
+    notificationSettingsOpen,
+    setNotificationSettingsOpen
+  ] = reactExports.useState(false);
+  const handleDragEnter = (event) => {
+    event.preventDefault();
+    dragDepth.current++;
+    if (Array.from(
+      event.dataTransfer.types
+    ).includes("Files")) {
+      setIsDraggingFile(true);
+    }
+  };
+  const handleDragLeave = (event) => {
+    event.preventDefault();
+    dragDepth.current = Math.max(
+      0,
+      dragDepth.current - 1
+    );
+    if (dragDepth.current === 0) {
+      setIsDraggingFile(false);
+    }
+  };
+  const handleDrop = (event) => {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setIsDraggingFile(false);
+    const files = Array.from(
+      event.dataTransfer.files
+    );
+    if (files.length !== 1) {
+      return;
+    }
+    void dashboard.loadDroppedFile(
+      files[0]
+    );
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+    "div",
+    {
+      className: "app-shell relative h-dvh overflow-hidden bg-[#0b0e14] text-gray-300 flex flex-col",
+      onDragEnter: handleDragEnter,
+      onDragOver: (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      },
+      onDragLeave: handleDragLeave,
+      onDrop: handleDrop,
+      children: [
         /* @__PURE__ */ jsxRuntimeExports.jsx(
-          FilePanel$1,
+          AppHeader$1,
           {
-            gcode: dashboard.gcode,
-            isLoading: dashboard.isLoading,
-            hasActivePrint: dashboard.hasActivePrint,
-            onFileChange: dashboard.handleFileInput,
-            onClearFile: dashboard.clearFile
-          }
-        ),
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          PrintJobPanel,
-          {
-            gcode: dashboard.gcode,
-            progress: dashboard.displayProgress,
-            connected: dashboard.printer.connected,
             status: dashboard.displayStatus,
             isTestMode: dashboard.isTestMode,
-            canStartPrint: dashboard.canStartPrint,
-            canStartTestPrint: dashboard.canStartTestPrint,
-            onStartPrint: dashboard.startPrint,
-            onStartTestPrint: dashboard.startTestPrint,
-            onPause: dashboard.pausePrint,
-            onResume: dashboard.resumePrint,
-            onStop: dashboard.stopPrint,
-            onReset: dashboard.resetPrint
+            connected: dashboard.printer.connected,
+            hasActivePrint: dashboard.hasActivePrint,
+            onToggleConnection: dashboard.toggleConnection,
+            onStopPrint: dashboard.stopPrint,
+            onOpenNotifications: () => setNotificationSettingsOpen(
+              true
+            )
           }
         ),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
-          JogControls$1,
+          ErrorBanner,
           {
-            connected: dashboard.printer.connected,
-            disabled: dashboard.hasActivePrint,
-            sendGcode: dashboard.printer.sendGcode
-          }
-        )
-      ] }),
-      /* @__PURE__ */ jsxRuntimeExports.jsx(
-        PreviewPanel,
-        {
-          gcode: dashboard.gcode,
-          progress: dashboard.displayProgress,
-          position: dashboard.displayPosition,
-          connected: dashboard.printer.connected,
-          isTestMode: dashboard.isTestMode,
-          hasActivePrint: dashboard.hasActivePrint
-        }
-      ),
-      /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "app-column min-h-0 lg:col-span-3 flex flex-col gap-4 overflow-y-auto", children: [
-        /* @__PURE__ */ jsxRuntimeExports.jsx(
-          TemperaturePanel$1,
-          {
-            hotend: dashboard.printer.hotend,
-            targetHotend: dashboard.printer.targetHotend,
-            bed: dashboard.printer.bed,
-            targetBed: dashboard.printer.targetBed,
-            history: dashboard.printer.temperatureHistory,
-            connected: dashboard.printer.connected,
-            hasActivePrint: dashboard.hasActivePrint,
-            sendGcode: dashboard.printer.sendGcode
+            error: dashboard.error,
+            onClear: dashboard.clearError
           }
         ),
+        /* @__PURE__ */ jsxRuntimeExports.jsxs("main", { className: "app-main min-h-0 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "app-column min-h-0 lg:col-span-3 flex flex-col gap-4 overflow-y-auto", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              FilePanel$1,
+              {
+                gcode: dashboard.gcode,
+                recentFiles: dashboard.recentFiles,
+                staleRecentPath: dashboard.staleRecentPath,
+                isLoading: dashboard.isLoading,
+                hasActivePrint: dashboard.hasActivePrint,
+                onChooseFile: dashboard.chooseFile,
+                onOpenRecent: dashboard.openRecentFile,
+                onRemoveRecent: dashboard.removeRecentFile,
+                onClearRecent: dashboard.clearRecentFiles,
+                onClearFile: dashboard.clearFile
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              PrintJobPanel,
+              {
+                gcode: dashboard.gcode,
+                progress: dashboard.displayProgress,
+                connected: dashboard.printer.connected,
+                status: dashboard.displayStatus,
+                isTestMode: dashboard.isTestMode,
+                canStartPrint: dashboard.canStartPrint,
+                canStartTestPrint: dashboard.canStartTestPrint,
+                onStartPrint: dashboard.startPrint,
+                onStartTestPrint: dashboard.startTestPrint,
+                onPause: dashboard.pausePrint,
+                onResume: dashboard.resumePrint,
+                onStop: dashboard.stopPrint,
+                onReset: dashboard.resetPrint
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              JogControls$1,
+              {
+                connected: dashboard.printer.connected,
+                disabled: dashboard.hasActivePrint,
+                sendGcode: dashboard.printer.sendGcode
+              }
+            )
+          ] }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            PreviewPanel,
+            {
+              gcode: dashboard.gcode,
+              progress: dashboard.displayProgress,
+              position: dashboard.displayPosition,
+              connected: dashboard.printer.connected,
+              isTestMode: dashboard.isTestMode,
+              hasActivePrint: dashboard.hasActivePrint
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsxs("section", { className: "app-column min-h-0 lg:col-span-3 flex flex-col gap-4 overflow-y-auto", children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              TemperaturePanel$1,
+              {
+                hotend: dashboard.printer.hotend,
+                targetHotend: dashboard.printer.targetHotend,
+                bed: dashboard.printer.bed,
+                targetBed: dashboard.printer.targetBed,
+                history: dashboard.printer.temperatureHistory,
+                connected: dashboard.printer.connected,
+                hasActivePrint: dashboard.hasActivePrint,
+                sendGcode: dashboard.printer.sendGcode
+              }
+            ),
+            /* @__PURE__ */ jsxRuntimeExports.jsx(
+              TerminalPanel$1,
+              {
+                lines: dashboard.printer.terminal,
+                connected: dashboard.printer.connected,
+                hasActivePrint: dashboard.hasActivePrint,
+                sendGcode: dashboard.printer.sendGcode,
+                clearTerminal: dashboard.printer.clearTerminal
+              }
+            )
+          ] })
+        ] }),
+        isDraggingFile && /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "pointer-events-none absolute inset-0 z-[100] grid place-items-center border-2 border-blue-500 bg-[#0b0e14]/90 backdrop-blur-sm", children: /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex flex-col items-center gap-3 text-blue-300", children: [
+          /* @__PURE__ */ jsxRuntimeExports.jsx(
+            "span",
+            {
+              className: "text-3xl",
+              "aria-hidden": "true",
+              children: "↓"
+            }
+          ),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold", children: "Drop one G-code file" }),
+          /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-500", children: "G-code, GCO, GC, or G" })
+        ] }) }),
         /* @__PURE__ */ jsxRuntimeExports.jsx(
-          TerminalPanel$1,
+          NotificationSettings,
           {
-            lines: dashboard.printer.terminal,
-            connected: dashboard.printer.connected,
-            hasActivePrint: dashboard.hasActivePrint,
-            sendGcode: dashboard.printer.sendGcode,
-            clearTerminal: dashboard.printer.clearTerminal
+            open: notificationSettingsOpen,
+            onClose: () => setNotificationSettingsOpen(
+              false
+            )
           }
         )
-      ] })
-    ] })
-  ] });
+      ]
+    }
+  );
 }
 ReactDOM.createRoot(document.getElementById("root")).render(
   /* @__PURE__ */ jsxRuntimeExports.jsx(React.StrictMode, { children: /* @__PURE__ */ jsxRuntimeExports.jsx(App, {}) })

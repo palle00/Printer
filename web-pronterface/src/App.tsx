@@ -1,6 +1,11 @@
 import {
   usePrinterDashboard,
 } from "./hooks/usePrinterDashboard";
+import {
+  useRef,
+  useState,
+  type DragEvent,
+} from "react";
 
 import AppHeader from "./components/AppHeader";
 import ErrorBanner from "./components/ErrorBanner";
@@ -10,13 +15,82 @@ import JogControls from "./components/JogControls";
 import PreviewPanel from "./components/PreviewPanel";
 import TemperaturePanel from "./components/TemperaturePanel";
 import TerminalPanel from "./components/TerminalPanel";
+import NotificationSettings from "./components/NotificationSettings";
 
 export default function App() {
   const dashboard =
     usePrinterDashboard();
+  const dragDepth =
+    useRef(0);
+  const [isDraggingFile, setIsDraggingFile] =
+    useState(false);
+  const [
+    notificationSettingsOpen,
+    setNotificationSettingsOpen,
+  ] = useState(false);
+
+  const handleDragEnter = (
+    event: DragEvent<HTMLDivElement>,
+  ): void => {
+    event.preventDefault();
+    dragDepth.current++;
+
+    if (
+      Array.from(
+        event.dataTransfer.types,
+      ).includes("Files")
+    ) {
+      setIsDraggingFile(true);
+    }
+  };
+
+  const handleDragLeave = (
+    event: DragEvent<HTMLDivElement>,
+  ): void => {
+    event.preventDefault();
+    dragDepth.current =
+      Math.max(
+        0,
+        dragDepth.current - 1,
+      );
+
+    if (dragDepth.current === 0) {
+      setIsDraggingFile(false);
+    }
+  };
+
+  const handleDrop = (
+    event: DragEvent<HTMLDivElement>,
+  ): void => {
+    event.preventDefault();
+    dragDepth.current = 0;
+    setIsDraggingFile(false);
+    const files =
+      Array.from(
+        event.dataTransfer.files,
+      );
+
+    if (files.length !== 1) {
+      return;
+    }
+
+    void dashboard.loadDroppedFile(
+      files[0],
+    );
+  };
 
   return (
-    <div className="app-shell h-dvh overflow-hidden bg-[#0b0e14] text-gray-300 flex flex-col">
+    <div
+      className="app-shell relative h-dvh overflow-hidden bg-[#0b0e14] text-gray-300 flex flex-col"
+      onDragEnter={handleDragEnter}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect =
+          "copy";
+      }}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <AppHeader
         status={
           dashboard.displayStatus
@@ -38,6 +112,11 @@ export default function App() {
         onStopPrint={
           dashboard.stopPrint
         }
+        onOpenNotifications={() =>
+          setNotificationSettingsOpen(
+            true,
+          )
+        }
       />
 
       <ErrorBanner
@@ -51,6 +130,13 @@ export default function App() {
         <section className="app-column min-h-0 lg:col-span-3 flex flex-col gap-4 overflow-y-auto">
           <FilePanel
             gcode={dashboard.gcode}
+            recentFiles={
+              dashboard.recentFiles
+            }
+            staleRecentPath={
+              dashboard
+                .staleRecentPath
+            }
             isLoading={
               dashboard.isLoading
             }
@@ -58,9 +144,21 @@ export default function App() {
               dashboard
                 .hasActivePrint
             }
-            onFileChange={
+            onChooseFile={
               dashboard
-                .handleFileInput
+                .chooseFile
+            }
+            onOpenRecent={
+              dashboard
+                .openRecentFile
+            }
+            onRemoveRecent={
+              dashboard
+                .removeRecentFile
+            }
+            onClearRecent={
+              dashboard
+                .clearRecentFiles
             }
             onClearFile={
               dashboard.clearFile
@@ -211,6 +309,34 @@ export default function App() {
           />
         </section>
       </main>
+      {isDraggingFile && (
+        <div className="pointer-events-none absolute inset-0 z-[100] grid place-items-center border-2 border-blue-500 bg-[#0b0e14]/90 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 text-blue-300">
+            <span
+              className="text-3xl"
+              aria-hidden="true"
+            >
+              ↓
+            </span>
+            <span className="text-sm font-semibold">
+              Drop one G-code file
+            </span>
+            <span className="text-xs text-gray-500">
+              G-code, GCO, GC, or G
+            </span>
+          </div>
+        </div>
+      )}
+      <NotificationSettings
+        open={
+          notificationSettingsOpen
+        }
+        onClose={() =>
+          setNotificationSettingsOpen(
+            false,
+          )
+        }
+      />
     </div>
   );
 }

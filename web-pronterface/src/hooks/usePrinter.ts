@@ -90,6 +90,7 @@ export function usePrinter() {
           fileName: gcode.fileName,
           lines: gcode.lines,
           totalLayers: gcode.totalLayers,
+          timing: gcode.timing,
         })
         .catch(reportError);
     },

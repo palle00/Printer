@@ -15,17 +15,12 @@ export interface SceneLayout {
   modelHeight: number;
 }
 
-export interface ToolpathBuildOptions {
-  includeTravels?: boolean;
-}
-
 export interface ToolpathData {
   positions: Float32Array<ArrayBufferLike>;
   commandIndexes: Float32Array<ArrayBufferLike>;
-  extrusionIndices: Uint32Array<ArrayBufferLike>;
+  categoryIndexes: Uint8Array<ArrayBufferLike>;
+  indices: Uint32Array<ArrayBufferLike>;
   layerIndexOffsets: Uint32Array<ArrayBufferLike>;
-  travelIndices: Uint32Array<ArrayBufferLike> | null;
-  travelLayerIndexOffsets: Uint32Array<ArrayBufferLike> | null;
 }
 
 export function getSceneLayout(
@@ -108,15 +103,10 @@ export async function buildToolpathData(
   gcode: ParsedGcode,
   signal: AbortSignal,
   onProgress?: (percent: number) => void,
-  options: ToolpathBuildOptions = {},
 ): Promise<ToolpathData> {
-  const includeTravels = options.includeTravels ?? false;
   const layerCount = Math.max(1, gcode.totalLayers) + 1;
-  const extrusionCounts = new Uint32Array(layerCount);
-  const travelCounts = new Uint32Array(layerCount);
-
-  let extrusionCount = 0;
-  let travelCount = 0;
+  const layerCounts = new Uint32Array(layerCount);
+  let segmentCount = 0;
 
   for (let sourceIndex = 0; sourceIndex < gcode.segments.length; sourceIndex++) {
     const coordinateOffset = sourceIndex * 6;
@@ -136,13 +126,8 @@ export async function buildToolpathData(
         coordinates[coordinateOffset + 5],
       )
     ) {
-      if (gcode.segments.extruding[sourceIndex] !== 0) {
-        extrusionCount++;
-        extrusionCounts[layer]++;
-      } else if (includeTravels) {
-        travelCount++;
-        travelCounts[layer]++;
-      }
+      segmentCount++;
+      layerCounts[layer]++;
     }
 
     if ((sourceIndex + 1) % BUILD_CHUNK_SIZE === 0) {
@@ -157,16 +142,10 @@ export async function buildToolpathData(
   throwIfAborted(signal);
 
   const commandIndexes = new Float32Array(gcode.segments.length * 2);
-  const extrusionIndices = new Uint32Array(extrusionCount * 2);
-  const travelIndices = includeTravels
-    ? new Uint32Array(travelCount * 2)
-    : null;
-  const layerIndexOffsets = buildOffsets(extrusionCounts, 2);
-  const travelLayerIndexOffsets = includeTravels
-    ? buildOffsets(travelCounts, 2)
-    : null;
-  let extrusionOutput = 0;
-  let travelOutput = 0;
+  const categoryIndexes = new Uint8Array(gcode.segments.length * 2);
+  const indices = new Uint32Array(segmentCount * 2);
+  const layerIndexOffsets = buildOffsets(layerCounts, 2);
+  let output = 0;
   let lastReportedPercent = 20;
 
   for (let sourceIndex = 0; sourceIndex < gcode.segments.length; sourceIndex++) {
@@ -194,22 +173,15 @@ export async function buildToolpathData(
 
     const vertexIndex = sourceIndex * 2;
     const commandIndex = gcode.segments.commandIndexes[sourceIndex];
+    const categoryIndex = gcode.segments.featureIndexes[sourceIndex];
     commandIndexes[vertexIndex] = commandIndex;
     commandIndexes[vertexIndex + 1] = commandIndex;
-
-    if (gcode.segments.extruding[sourceIndex] === 0) {
-      if (travelIndices) {
-        const offset = travelOutput * 2;
-        travelIndices[offset] = vertexIndex;
-        travelIndices[offset + 1] = vertexIndex + 1;
-        travelOutput++;
-      }
-    } else {
-      const offset = extrusionOutput * 2;
-      extrusionIndices[offset] = vertexIndex;
-      extrusionIndices[offset + 1] = vertexIndex + 1;
-      extrusionOutput++;
-    }
+    categoryIndexes[vertexIndex] = categoryIndex;
+    categoryIndexes[vertexIndex + 1] = categoryIndex;
+    const offset = output * 2;
+    indices[offset] = vertexIndex;
+    indices[offset + 1] = vertexIndex + 1;
+    output++;
 
     if (
       (sourceIndex + 1) % BUILD_CHUNK_SIZE === 0 ||
@@ -235,9 +207,8 @@ export async function buildToolpathData(
   return {
     positions: gcode.segments.coordinates,
     commandIndexes,
-    extrusionIndices,
+    categoryIndexes,
+    indices,
     layerIndexOffsets,
-    travelIndices,
-    travelLayerIndexOffsets,
   };
 }

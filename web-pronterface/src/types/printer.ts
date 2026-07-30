@@ -31,6 +31,27 @@ export interface PrintProgress {
 
   elapsedSeconds: number;
   etaSeconds: number;
+  estimatedTotalSeconds:
+    number | null;
+  estimateSource:
+    "slicer" | "motion" | "live" | null;
+  estimateConfidence:
+    "low" | "medium" | "high" | null;
+  isHeating: boolean;
+}
+
+export interface PrintCompletionMetrics {
+  originalEstimateSeconds:
+    number | null;
+  finalCalibratedEstimateSeconds:
+    number | null;
+  actualActiveSeconds: number;
+  absoluteErrorSeconds:
+    number | null;
+  percentageError:
+    number | null;
+  estimateSource:
+    "slicer" | "motion" | "live" | null;
 }
 
 export interface TemperatureSample {
@@ -87,6 +108,10 @@ export const initialPrintProgress:
 
     elapsedSeconds: 0,
     etaSeconds: 0,
+    estimatedTotalSeconds: null,
+    estimateSource: null,
+    estimateConfidence: null,
+    isHeating: false,
   };
 
 export const initialPrinterState:
@@ -122,6 +147,7 @@ export type PrinterEvent =
     }
   | {
       type: "DISCONNECTED";
+      unexpected: boolean;
     }
   | {
       type: "STATUS";
@@ -148,6 +174,8 @@ export type PrinterEvent =
       >;
 
       elapsedSeconds: number;
+      metrics:
+        PrintCompletionMetrics;
     }
   | {
       type: "PRINT_STOPPED";

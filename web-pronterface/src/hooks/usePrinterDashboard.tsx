@@ -15,16 +15,6 @@ export function usePrinterDashboard() {
   const printer =
     usePrinter();
 
-  const {
-    gcode,
-    isLoading,
-
-    error: fileError,
-
-    handleFileInput,
-    clearFile,
-  } = useGcode();
-
   const hasActivePrint =
     printer.status ===
       "printing" ||
@@ -34,6 +24,25 @@ export function usePrinterDashboard() {
       "paused" ||
     printer.status ===
       "stopping";
+
+  const {
+    gcode,
+    recentFiles,
+    staleRecentPath,
+    isLoading,
+
+    error: fileError,
+
+    chooseFile,
+    loadDroppedFile,
+    openRecentFile,
+    removeRecentFile,
+    clearRecentFiles,
+    clearFile,
+    clearError: clearFileError,
+  } = useGcode({
+    hasActivePrint,
+  });
 
   const canStartPrint =
     printer.connected &&
@@ -106,9 +115,15 @@ export function usePrinterDashboard() {
     printer,
 
     gcode,
+    recentFiles,
+    staleRecentPath,
     isLoading,
 
-    handleFileInput,
+    chooseFile,
+    loadDroppedFile,
+    openRecentFile,
+    removeRecentFile,
+    clearRecentFiles,
     clearFile,
 
     hasActivePrint,
@@ -135,7 +150,9 @@ export function usePrinterDashboard() {
     clearError:
       printer.error
         ? printer.clearError
-        : undefined,
+        : fileError
+          ? clearFileError
+          : undefined,
 
     toggleConnection,
 

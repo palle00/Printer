@@ -11,6 +11,7 @@ export interface ProgressOptions {
   percentOverride?: number;
 
   estimatedDurationSeconds?: number;
+  force?: boolean;
 }
 
 export interface PrintRunnerContext {

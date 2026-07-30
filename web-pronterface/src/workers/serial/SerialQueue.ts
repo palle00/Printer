@@ -4,7 +4,7 @@ import type {
 
 import {
   stripGcodeLine,
-} from "../gcode/prepareCommands";
+} from "../../gcode/commandLine";
 
 import type {
   SerialTransport,

@@ -1,5 +1,6 @@
 import type {
   PrintMode,
+  PrintCompletionMetrics,
   PrintProgress,
   PrinterPosition,
   PrinterStatus,
@@ -53,9 +54,12 @@ export class PrinterEvents {
     });
   }
 
-  disconnected(): void {
+  disconnected(
+    unexpected = false,
+  ): void {
     this.post({
       type: "DISCONNECTED",
+      unexpected,
     });
   }
 
@@ -131,12 +135,15 @@ export class PrinterEvents {
   printFinished(
     mode: Exclude<PrintMode, null>,
     elapsedSeconds: number,
+    metrics:
+      PrintCompletionMetrics,
   ): void {
     this.post({
       type: "PRINT_FINISHED",
 
       mode,
       elapsedSeconds,
+      metrics,
     });
   }
 

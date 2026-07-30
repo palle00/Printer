@@ -2,12 +2,19 @@ import {
   useEffect,
   useState,
 } from "react";
+import {
+  createDefaultFeatureVisibility,
+  PRINTED_PATH_COLOR,
+  type GcodeFeatureCategory,
+} from "../gcode/features";
 import type { ParsedGcode } from "../types/gcode";
 import type {
   PrintProgress,
   PrinterPosition,
 } from "../types/printer";
 import GcodeViewer from "./GcodeViewer";
+import PreviewLegend from "./PreviewLegend";
+import PreviewStatistics from "./PreviewStatistics";
 
 interface PreviewPanelProps {
   gcode: ParsedGcode | null;
@@ -35,6 +42,17 @@ export default function PreviewPanel({
     followPrinterLayer,
     setFollowPrinterLayer,
   ] = useState(true);
+  const [
+    featureVisibility,
+    setFeatureVisibility,
+  ] = useState<
+    Record<
+      GcodeFeatureCategory,
+      boolean
+    >
+  >(
+    createDefaultFeatureVisibility,
+  );
 
   useEffect(() => {
     setPreviewLayer(
@@ -171,7 +189,36 @@ export default function PreviewPanel({
           showNozzle={
             connected || isTestMode
           }
+          featureVisibility={
+            featureVisibility
+          }
         />
+
+        {gcode && (
+          <>
+            <PreviewStatistics
+              statistics={
+                gcode.statistics
+              }
+              layerCount={
+                gcode.totalLayers
+              }
+            />
+
+            <PreviewLegend
+              statistics={
+                gcode.statistics
+                  .featureBreakdown
+              }
+              visibility={
+                featureVisibility
+              }
+              onChange={
+                setFeatureVisibility
+              }
+            />
+          </>
+        )}
 
         {!gcode && (
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -209,12 +256,13 @@ export default function PreviewPanel({
       </div>
 
       <div className="shrink-0 bg-[#181d2c] border-t border-gray-800 px-4 py-2 flex justify-between text-[10px] font-mono">
-        <div className="flex gap-4">
-          <span className="text-blue-400">
-            ● PLANNED
-          </span>
-
-          <span className="text-orange-400">
+        <div>
+          <span
+            style={{
+              color:
+                PRINTED_PATH_COLOR,
+            }}
+          >
             ● PRINTED
           </span>
         </div>

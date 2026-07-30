@@ -1,11 +1,24 @@
 import type {
     PrinterEvent,
 } from "./printer";
+import type {
+    EstimateConfidence,
+} from "./gcode";
+
+export interface RealPrintTimingPayload {
+    cumulativeSeconds:
+        Float32Array<ArrayBufferLike>;
+    totalSeconds: number;
+    heatingSeconds: number;
+    source: "slicer" | "motion";
+    confidence: EstimateConfidence;
+}
 
 export interface RealPrintPayload {
     fileName: string;
     lines: string[];
     totalLayers: number;
+    timing: RealPrintTimingPayload;
 }
 
 export interface TestPrintPath {
