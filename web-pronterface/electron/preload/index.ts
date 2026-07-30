@@ -112,16 +112,14 @@ const printerApi: PrinterApi =
     },
 
     connect(
+      path: string,
       baudRate = 115200,
-    ): Promise<
-      PrinterConnectionResult | null
-    > {
+    ): Promise<PrinterConnectionResult> {
       return ipcRenderer.invoke(
         PRINTER_IPC.connect,
+        path,
         baudRate,
-      ) as Promise<
-        PrinterConnectionResult | null
-      >;
+      ) as Promise<PrinterConnectionResult>;
     },
 
     disconnect(): Promise<void> {

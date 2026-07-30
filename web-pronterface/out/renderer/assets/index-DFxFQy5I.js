@@ -12669,18 +12669,15 @@ function usePrinter() {
     }),
     []
   );
-  const connect = reactExports.useCallback(async () => {
+  const connect = reactExports.useCallback(async (path) => {
     try {
-      const connection = await window.desktop.printer.connect(115200);
-      if (!connection) {
-        appendTerminal(">> Port selection cancelled.");
-        return;
-      }
+      const connection = await window.desktop.printer.connect(path, 115200);
       appendTerminal(
         `>> Connected to ${connection.path} at ${connection.baudRate} baud.`
       );
     } catch (error2) {
       reportError2(error2);
+      throw error2;
     }
   }, [appendTerminal, reportError2]);
   const disconnect = reactExports.useCallback(() => {
@@ -13018,7 +13015,7 @@ function parseGcodeInWorker(fileName, text, filePath, fileSize) {
   };
 }
 const SUPPORTED_FILE_PATTERN = /\.(?:gcode|gco|gc|g)$/i;
-function getErrorMessage(error2) {
+function getErrorMessage$1(error2) {
   return error2 instanceof Error ? error2.message : String(error2);
 }
 function useGcode({
@@ -13049,7 +13046,7 @@ function useGcode({
     }).catch((settingsError) => {
       if (active) {
         setError(
-          getErrorMessage(
+          getErrorMessage$1(
             settingsError
           )
         );
@@ -13117,7 +13114,7 @@ function useGcode({
       } catch (loadError) {
         if (generation === loadGeneration.current) {
           setError(
-            getErrorMessage(
+            getErrorMessage$1(
               loadError
             )
           );
@@ -13142,7 +13139,7 @@ function useGcode({
       }
     } catch (loadError) {
       setError(
-        getErrorMessage(loadError)
+        getErrorMessage$1(loadError)
       );
     }
   }, [
@@ -13167,7 +13164,7 @@ function useGcode({
         await acceptFile(data);
       } catch (loadError) {
         setError(
-          getErrorMessage(
+          getErrorMessage$1(
             loadError
           )
         );
@@ -13193,7 +13190,7 @@ function useGcode({
           filePath
         );
         setError(
-          getErrorMessage(
+          getErrorMessage$1(
             loadError
           )
         );
@@ -13273,19 +13270,6 @@ function usePrinterDashboard() {
     gcode?.fileName,
     printer.resetPrint
   ]);
-  const toggleConnection = reactExports.useCallback(async () => {
-    if (printer.connected) {
-      printer.disconnect();
-      return;
-    }
-    printer.resetPrint();
-    await printer.connect();
-  }, [
-    printer.connected,
-    printer.connect,
-    printer.disconnect,
-    printer.resetPrint
-  ]);
   const startPrint = reactExports.useCallback(() => {
     if (!gcode || !canStartPrint) {
       return;
@@ -13329,7 +13313,6 @@ function usePrinterDashboard() {
     displayPosition: printer.position,
     error: printer.error ?? fileError ?? null,
     clearError: printer.error ? printer.clearError : fileError ? clearFileError : void 0,
-    toggleConnection,
     startPrint,
     startTestPrint,
     pausePrint: printer.pausePrint,
@@ -43108,6 +43091,222 @@ function NotificationSettings({
     }
   );
 }
+function getErrorMessage(error2) {
+  return error2 instanceof Error ? error2.message : String(error2);
+}
+function getPortDescription(port) {
+  return port.manufacturer?.trim() || "USB serial device";
+}
+function getUsbIdentifier(port) {
+  if (port.vendorId && port.productId) {
+    return `VID ${port.vendorId} / PID ${port.productId}`;
+  }
+  return port.serialNumber ? `Serial ${port.serialNumber}` : null;
+}
+function PortPickerDialog({
+  open,
+  onClose,
+  onConnect
+}) {
+  const dialogRef = reactExports.useRef(null);
+  const [ports, setPorts] = reactExports.useState([]);
+  const [selectedPath, setSelectedPath] = reactExports.useState(null);
+  const [isLoading, setIsLoading] = reactExports.useState(false);
+  const [isConnecting, setIsConnecting] = reactExports.useState(false);
+  const [error2, setError] = reactExports.useState(null);
+  const refreshPorts = reactExports.useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const nextPorts = await window.desktop.printer.listPorts();
+      setPorts(nextPorts);
+      setSelectedPath((currentPath) => {
+        if (currentPath && nextPorts.some(
+          (port) => port.path === currentPath
+        )) {
+          return currentPath;
+        }
+        return nextPorts[0]?.path ?? null;
+      });
+    } catch (loadError) {
+      setPorts([]);
+      setSelectedPath(null);
+      setError(getErrorMessage(loadError));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+  reactExports.useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setIsConnecting(false);
+    void refreshPorts();
+    requestAnimationFrame(() => {
+      dialogRef.current?.focus();
+    });
+  }, [open, refreshPorts]);
+  reactExports.useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape" && !isConnecting) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isConnecting, onClose, open]);
+  if (!open) {
+    return null;
+  }
+  const connect = async () => {
+    if (!selectedPath || isConnecting) {
+      return;
+    }
+    setIsConnecting(true);
+    setError(null);
+    try {
+      await onConnect(selectedPath);
+      onClose();
+    } catch (connectionError) {
+      setError(getErrorMessage(connectionError));
+      setIsConnecting(false);
+    }
+  };
+  return /* @__PURE__ */ jsxRuntimeExports.jsx(
+    "div",
+    {
+      className: "absolute inset-0 z-[95] grid place-items-center bg-black/75 p-4",
+      role: "presentation",
+      onMouseDown: (event) => {
+        if (event.target === event.currentTarget && !isConnecting) {
+          onClose();
+        }
+      },
+      children: /* @__PURE__ */ jsxRuntimeExports.jsxs(
+        "section",
+        {
+          ref: dialogRef,
+          role: "dialog",
+          "aria-modal": "true",
+          "aria-labelledby": "port-picker-title",
+          tabIndex: -1,
+          className: "w-full max-w-lg overflow-hidden rounded-lg border border-gray-700 bg-[#121620] shadow-2xl outline-none",
+          children: [
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("header", { className: "flex items-start justify-between border-b border-gray-800 px-5 py-4", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "h2",
+                  {
+                    id: "port-picker-title",
+                    className: "text-sm font-bold text-white",
+                    children: "Connect USB printer"
+                  }
+                ),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("p", { className: "mt-1 text-xs text-gray-500", children: "Select a detected serial port" })
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex items-center gap-3", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "font-mono text-xs text-gray-500", children: "115200 baud" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: onClose,
+                    disabled: isConnecting,
+                    "aria-label": "Close port picker",
+                    className: "h-7 w-7 text-lg text-gray-500 hover:text-white disabled:cursor-not-allowed disabled:text-gray-700",
+                    children: "x"
+                  }
+                )
+              ] })
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "p-5", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "mb-3 flex items-center justify-between", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs font-bold uppercase text-gray-400", children: "Serial ports" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx(
+                  "button",
+                  {
+                    type: "button",
+                    onClick: () => void refreshPorts(),
+                    disabled: isLoading || isConnecting,
+                    className: "text-xs font-semibold text-blue-400 hover:text-blue-300 disabled:cursor-not-allowed disabled:text-gray-600",
+                    children: isLoading ? "Scanning..." : "Refresh"
+                  }
+                )
+              ] }),
+              /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "max-h-72 overflow-y-auto border border-gray-800", children: isLoading && ports.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsx("div", { className: "grid min-h-32 place-items-center text-xs text-gray-500", children: "Scanning serial ports..." }) : ports.length === 0 ? /* @__PURE__ */ jsxRuntimeExports.jsxs("div", { className: "flex min-h-32 flex-col items-center justify-center gap-2 px-6 text-center", children: [
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-sm font-semibold text-gray-300", children: "No serial ports found" }),
+                /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "text-xs text-gray-500", children: "Connect the printer by USB and refresh." })
+              ] }) : ports.map((port) => {
+                const selected = port.path === selectedPath;
+                const usbIdentifier = getUsbIdentifier(port);
+                return /* @__PURE__ */ jsxRuntimeExports.jsxs(
+                  "label",
+                  {
+                    className: `flex cursor-pointer items-center gap-4 border-b border-gray-800 px-4 py-3 last:border-b-0 ${selected ? "bg-blue-950/50" : "bg-[#0f131d] hover:bg-[#181d2c]"}`,
+                    children: [
+                      /* @__PURE__ */ jsxRuntimeExports.jsx(
+                        "input",
+                        {
+                          type: "radio",
+                          name: "serial-port",
+                          value: port.path,
+                          checked: selected,
+                          onChange: () => setSelectedPath(port.path),
+                          className: "accent-blue-500"
+                        }
+                      ),
+                      /* @__PURE__ */ jsxRuntimeExports.jsxs("span", { className: "min-w-0 flex-1", children: [
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "block font-mono text-sm font-bold text-gray-100", children: port.path }),
+                        /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "mt-0.5 block truncate text-xs text-gray-400", children: getPortDescription(port) })
+                      ] }),
+                      usbIdentifier && /* @__PURE__ */ jsxRuntimeExports.jsx("span", { className: "hidden shrink-0 font-mono text-[11px] text-gray-500 sm:block", children: usbIdentifier })
+                    ]
+                  },
+                  port.path
+                );
+              }) }),
+              error2 && /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "p",
+                {
+                  role: "alert",
+                  className: "mt-3 text-xs text-red-400",
+                  children: error2
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsxRuntimeExports.jsxs("footer", { className: "flex items-center justify-end gap-2 border-t border-gray-800 bg-[#0f131d] px-5 py-4", children: [
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  type: "button",
+                  onClick: onClose,
+                  disabled: isConnecting,
+                  className: "px-4 py-2 text-xs font-bold text-gray-400 hover:text-white disabled:cursor-not-allowed disabled:text-gray-700",
+                  children: "Cancel"
+                }
+              ),
+              /* @__PURE__ */ jsxRuntimeExports.jsx(
+                "button",
+                {
+                  type: "button",
+                  onClick: () => void connect(),
+                  disabled: !selectedPath || isLoading || isConnecting,
+                  className: "min-w-28 rounded bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-gray-800 disabled:text-gray-600",
+                  children: isConnecting ? "Connecting..." : "Connect"
+                }
+              )
+            ] })
+          ]
+        }
+      )
+    }
+  );
+}
 function App() {
   const dashboard = usePrinterDashboard();
   const dragDepth = reactExports.useRef(0);
@@ -43116,6 +43315,18 @@ function App() {
     notificationSettingsOpen,
     setNotificationSettingsOpen
   ] = reactExports.useState(false);
+  const [
+    portPickerOpen,
+    setPortPickerOpen
+  ] = reactExports.useState(false);
+  const handleToggleConnection = () => {
+    if (dashboard.printer.connected) {
+      dashboard.printer.disconnect();
+      return;
+    }
+    dashboard.resetPrint();
+    setPortPickerOpen(true);
+  };
   const handleDragEnter = (event) => {
     event.preventDefault();
     dragDepth.current++;
@@ -43168,7 +43379,7 @@ function App() {
             isTestMode: dashboard.isTestMode,
             connected: dashboard.printer.connected,
             hasActivePrint: dashboard.hasActivePrint,
-            onToggleConnection: dashboard.toggleConnection,
+            onToggleConnection: handleToggleConnection,
             onStopPrint: dashboard.stopPrint,
             onOpenNotifications: () => setNotificationSettingsOpen(
               true
@@ -43282,6 +43493,14 @@ function App() {
             onClose: () => setNotificationSettingsOpen(
               false
             )
+          }
+        ),
+        /* @__PURE__ */ jsxRuntimeExports.jsx(
+          PortPickerDialog,
+          {
+            open: portPickerOpen,
+            onClose: () => setPortPickerOpen(false),
+            onConnect: dashboard.printer.connect
           }
         )
       ]

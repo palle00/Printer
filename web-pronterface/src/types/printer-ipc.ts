@@ -92,17 +92,10 @@ export interface PrinterApi {
     listPorts():
         Promise<NativeSerialPortInfo[]>;
 
-    /**
-     * Opens a native port-selection dialog and
-     * connects to the chosen device.
-     *
-     * Returns null when the dialog is cancelled.
-     */
     connect(
+        path: string,
         baudRate?: number,
-    ): Promise<
-        PrinterConnectionResult | null
-    >;
+    ): Promise<PrinterConnectionResult>;
 
     disconnect(): Promise<void>;
 

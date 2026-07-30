@@ -1,9 +1,9 @@
 {
   "name": "PrintInterface",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.5",
   "description": "Desktop 3D printer controller",
-  "author": "Patrick Bertelsen",
+  "author": "palle00",
   "repository": {
     "type": "git",
     "url": "https://github.com/palle00/Printer.git",

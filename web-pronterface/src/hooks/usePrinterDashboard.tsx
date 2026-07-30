@@ -62,23 +62,6 @@ export function usePrinterDashboard() {
     printer.resetPrint,
   ]);
 
-  const toggleConnection =
-    useCallback(async () => {
-      if (printer.connected) {
-        printer.disconnect();
-        return;
-      }
-
-      printer.resetPrint();
-
-      await printer.connect();
-    }, [
-      printer.connected,
-      printer.connect,
-      printer.disconnect,
-      printer.resetPrint,
-    ]);
-
   const startPrint = useCallback(() => {
     if (
       !gcode ||
@@ -153,8 +136,6 @@ export function usePrinterDashboard() {
         : fileError
           ? clearFileError
           : undefined,
-
-    toggleConnection,
 
     startPrint,
     startTestPrint,

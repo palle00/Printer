@@ -85,9 +85,10 @@ const printerApi = Object.freeze({
       PRINTER_IPC.listPorts
     );
   },
-  connect(baudRate = 115200) {
+  connect(path, baudRate = 115200) {
     return electron.ipcRenderer.invoke(
       PRINTER_IPC.connect,
+      path,
       baudRate
     );
   },

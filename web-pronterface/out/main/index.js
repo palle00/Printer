@@ -2233,47 +2233,18 @@ class PrinterRuntime {
     }
   }
 }
-function formatPortLabel(port) {
-  const description = [
-    port.manufacturer,
-    port.vendorId && port.productId ? `VID ${port.vendorId} / PID ${port.productId}` : null
-  ].filter((value) => Boolean(value));
-  return description.length > 0 ? `${port.path} - ${description.join(" - ")}` : port.path;
-}
-async function choosePrinterPort(window, ports) {
-  if (ports.length === 0) {
-    await electron.dialog.showMessageBox(window, {
-      type: "warning",
-      title: "No serial ports found",
-      message: "No serial devices were detected.",
-      detail: "Connect the printer through USB, verify its driver is installed, and try again.",
-      buttons: ["OK"],
-      defaultId: 0,
-      cancelId: 0,
-      noLink: true
-    });
-    return null;
-  }
-  const labels = ports.map(formatPortLabel);
-  const cancelIndex = labels.length;
-  const result = await electron.dialog.showMessageBox(window, {
-    type: "question",
-    title: "Select printer port",
-    message: "Choose the USB serial port used by your 3D printer.",
-    detail: "On Windows, the printer normally appears as COM3, COM4, or another COM port.",
-    buttons: [...labels, "Cancel"],
-    defaultId: 0,
-    cancelId: cancelIndex,
-    noLink: true
-  });
-  return ports[result.response] ?? null;
-}
 function assertBaudRate(value) {
   const baudRate = value === void 0 ? 115200 : Number(value);
   if (!Number.isInteger(baudRate) || baudRate < 1200 || baudRate > 2e6) {
     throw new Error("Invalid serial baud rate.");
   }
   return baudRate;
+}
+function assertSerialPortPath(value) {
+  if (typeof value !== "string" || value.trim().length === 0 || value.length > 512) {
+    throw new Error("Invalid serial port.");
+  }
+  return value;
 }
 function assertRealPrintPayload(value) {
   if (!value || typeof value !== "object") {
@@ -2331,19 +2302,19 @@ function registerPrinterIpc({
   });
   electron.ipcMain.handle(
     PRINTER_IPC.connect,
-    async (event, requestedBaudRate) => {
-      const window = assertTrustedSender(event, getWindow());
+    async (event, requestedPath, requestedBaudRate) => {
+      assertTrustedSender(event, getWindow());
+      const path2 = assertSerialPortPath(requestedPath);
       const baudRate = assertBaudRate(requestedBaudRate);
-      const selectedPort = await choosePrinterPort(
-        window,
-        await runtime.listPorts()
-      );
-      if (!selectedPort) {
-        return null;
+      const availablePorts = await runtime.listPorts();
+      if (!availablePorts.some((port) => port.path === path2)) {
+        throw new Error(
+          `${path2} is no longer available. Refresh the port list and try again.`
+        );
       }
-      await runtime.connect(selectedPort.path, baudRate);
+      await runtime.connect(path2, baudRate);
       return {
-        path: selectedPort.path,
+        path: path2,
         baudRate
       };
     }

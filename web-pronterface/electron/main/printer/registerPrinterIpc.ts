@@ -8,10 +8,10 @@ import {
   type PrinterConnectionResult,
 } from "../../../src/types/printer-ipc";
 import type { PrinterRuntime } from "./PrinterRuntime";
-import { choosePrinterPort } from "./choosePrinterPort";
 import {
   assertBaudRate,
   assertRealPrintPayload,
+  assertSerialPortPath,
   assertTestPrintPayload,
 } from "./printerIpcValidation";
 import {
@@ -53,23 +53,24 @@ export function registerPrinterIpc({
     PRINTER_IPC.connect,
     async (
       event,
+      requestedPath: unknown,
       requestedBaudRate: unknown,
-    ): Promise<PrinterConnectionResult | null> => {
-      const window = assertTrustedSender(event, getWindow());
+    ): Promise<PrinterConnectionResult> => {
+      assertTrustedSender(event, getWindow());
+      const path = assertSerialPortPath(requestedPath);
       const baudRate = assertBaudRate(requestedBaudRate);
-      const selectedPort = await choosePrinterPort(
-        window,
-        await runtime.listPorts(),
-      );
+      const availablePorts = await runtime.listPorts();
 
-      if (!selectedPort) {
-        return null;
+      if (!availablePorts.some((port) => port.path === path)) {
+        throw new Error(
+          `${path} is no longer available. Refresh the port list and try again.`,
+        );
       }
 
-      await runtime.connect(selectedPort.path, baudRate);
+      await runtime.connect(path, baudRate);
 
       return {
-        path: selectedPort.path,
+        path,
         baudRate,
       };
     },

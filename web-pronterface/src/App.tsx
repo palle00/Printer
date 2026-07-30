@@ -16,6 +16,7 @@ import PreviewPanel from "./components/PreviewPanel";
 import TemperaturePanel from "./components/TemperaturePanel";
 import TerminalPanel from "./components/TerminalPanel";
 import NotificationSettings from "./components/NotificationSettings";
+import PortPickerDialog from "./components/PortPickerDialog";
 
 export default function App() {
   const dashboard =
@@ -28,6 +29,22 @@ export default function App() {
     notificationSettingsOpen,
     setNotificationSettingsOpen,
   ] = useState(false);
+  const [
+    portPickerOpen,
+    setPortPickerOpen,
+  ] = useState(false);
+
+  const handleToggleConnection = (): void => {
+    if (
+      dashboard.printer.connected
+    ) {
+      dashboard.printer.disconnect();
+      return;
+    }
+
+    dashboard.resetPrint();
+    setPortPickerOpen(true);
+  };
 
   const handleDragEnter = (
     event: DragEvent<HTMLDivElement>,
@@ -106,8 +123,7 @@ export default function App() {
           dashboard.hasActivePrint
         }
         onToggleConnection={
-          dashboard
-            .toggleConnection
+          handleToggleConnection
         }
         onStopPrint={
           dashboard.stopPrint
@@ -335,6 +351,15 @@ export default function App() {
           setNotificationSettingsOpen(
             false,
           )
+        }
+      />
+      <PortPickerDialog
+        open={portPickerOpen}
+        onClose={() =>
+          setPortPickerOpen(false)
+        }
+        onConnect={
+          dashboard.printer.connect
         }
       />
     </div>

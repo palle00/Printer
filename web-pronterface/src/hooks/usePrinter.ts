@@ -48,21 +48,17 @@ export function usePrinter() {
     [],
   );
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (path: string) => {
     try {
       const connection =
-        await window.desktop.printer.connect(115200);
-
-      if (!connection) {
-        appendTerminal(">> Port selection cancelled.");
-        return;
-      }
+        await window.desktop.printer.connect(path, 115200);
 
       appendTerminal(
         `>> Connected to ${connection.path} at ${connection.baudRate} baud.`,
       );
     } catch (error) {
       reportError(error);
+      throw error;
     }
   }, [appendTerminal, reportError]);
 

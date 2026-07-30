@@ -17,6 +17,20 @@ export function assertBaudRate(value: unknown): number {
   return baudRate;
 }
 
+export function assertSerialPortPath(
+  value: unknown,
+): string {
+  if (
+    typeof value !== "string" ||
+    value.trim().length === 0 ||
+    value.length > 512
+  ) {
+    throw new Error("Invalid serial port.");
+  }
+
+  return value;
+}
+
 export function assertRealPrintPayload(
   value: unknown,
 ): asserts value is RealPrintPayload {
