@@ -26,3 +26,8 @@ electron/GcodeTest/test.gcode
 *.njsproj
 *.sln
 *.sw?
+
+# Generated/user print files
+*.gcode
+*.gco
+*.g
