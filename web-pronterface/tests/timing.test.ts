@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  existsSync,
   readFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -30,6 +31,14 @@ import {
   parseGcode,
 } from "../src/utils/gcodeParser";
 
+const LARGE_FIXTURE_PATH =
+  path.join(
+    process.cwd(),
+    "electron",
+    "GcodeTest",
+    "test.gcode",
+  );
+
 test(
   "motion timing models cruise and short acceleration-limited moves",
   () => {
@@ -54,14 +63,15 @@ test(
 
 test(
   "large fixture keeps every preview path and aligns its compact command timeline",
+  {
+    skip:
+      !existsSync(
+        LARGE_FIXTURE_PATH,
+      ),
+  },
   () => {
     const text = readFileSync(
-      path.join(
-        process.cwd(),
-        "electron",
-        "GcodeTest",
-        "test.gcode",
-      ),
+      LARGE_FIXTURE_PATH,
       "utf8",
     );
     const parsed = parseGcode(

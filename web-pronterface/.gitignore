@@ -14,6 +14,7 @@ out
 release
 *.local
 .tmp
+electron/GcodeTest/test.gcode
 
 # Editor directories and files
 .vscode/*
