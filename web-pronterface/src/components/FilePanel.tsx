@@ -1,6 +1,7 @@
 import type {
   ChangeEventHandler,
 } from "react";
+import { memo } from "react";
 import type { ParsedGcode } from "../types/gcode";
 import {
   Panel,
@@ -16,7 +17,7 @@ interface FilePanelProps {
   onClearFile: () => void;
 }
 
-export default function FilePanel({
+function FilePanel({
   gcode,
   isLoading,
   hasActivePrint,
@@ -81,3 +82,5 @@ export default function FilePanel({
     </Panel>
   );
 }
+
+export default memo(FilePanel);

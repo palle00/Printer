@@ -34,7 +34,7 @@ export class RealPrintRunner {
       for (
         let index = 0;
         index <
-        session.commands.length;
+        session.commands.texts.length;
         index++
       ) {
         if (
@@ -60,10 +60,10 @@ export class RealPrintRunner {
         }
 
         const command =
-          session.commands[index];
+          session.commands.texts[index];
 
         await this.queue.queue(
-          command.text,
+          command,
         );
 
         if (
@@ -78,7 +78,7 @@ export class RealPrintRunner {
           index + 1;
 
         session.currentLayer =
-          command.layer;
+          session.commands.layers[index];
 
         this.context.emitProgress(
           session,

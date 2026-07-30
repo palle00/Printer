@@ -103,13 +103,13 @@ export default function TemperatureGraph({
 
       <div className="relative bg-black rounded border border-gray-900 overflow-hidden">
         {samples.length === 0 ? (
-          <div className="h-44 flex items-center justify-center text-[10px] text-gray-600 font-mono">
+          <div className="h-[clamp(6rem,18vh,11rem)] flex items-center justify-center text-[10px] text-gray-600 font-mono">
             Waiting for temperature data...
           </div>
         ) : (
           <svg
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-            className="block w-full h-44"
+            className="block w-full h-[clamp(6rem,18vh,11rem)]"
             preserveAspectRatio="none"
           >
             <rect

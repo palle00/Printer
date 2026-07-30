@@ -42,6 +42,7 @@
     "src/types/printer-ipc.ts",
     "src/types/printer.ts",
     "src/types/gcode.ts",
+    "src/gcode/**/*.ts",
 
     "src/print/printMath.ts",
 

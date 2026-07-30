@@ -17,9 +17,8 @@ export interface GcodeSegment {
 
 export interface ParsedGcode {
   fileName: string;
-  text: string;
   lines: string[];
-  segments: GcodeSegment[];
+  segments: GcodeSegmentStore;
 
   totalLines: number;
   totalLayers: number;
@@ -32,3 +31,6 @@ export interface ParsedGcode {
   minZ: number;
   maxZ: number;
 }
+import type {
+  GcodeSegmentStore,
+} from "../gcode/GcodeSegmentStore";

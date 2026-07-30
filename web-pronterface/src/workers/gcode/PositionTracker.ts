@@ -3,8 +3,8 @@ import type {
 } from "../../types/printer";
 
 import type {
-  WorkerEvents,
-} from "../core/WorkerEvents";
+  PrinterEvents,
+} from "../core/PrinterEvents";
 
 function parseValue(
   command: string,
@@ -52,7 +52,7 @@ export class PositionTracker {
 
   constructor(
     private readonly events:
-      WorkerEvents,
+      PrinterEvents,
   ) {}
 
   get current(): PrinterPosition {

@@ -16,7 +16,7 @@ export default function App() {
     usePrinterDashboard();
 
   return (
-    <div className="min-h-screen bg-[#0b0e14] text-gray-300 flex flex-col">
+    <div className="app-shell h-dvh overflow-hidden bg-[#0b0e14] text-gray-300 flex flex-col">
       <AppHeader
         status={
           dashboard.displayStatus
@@ -47,8 +47,8 @@ export default function App() {
         }
       />
 
-      <main className="flex-1 grid grid-cols-1 xl:grid-cols-12 gap-4 p-4">
-        <section className="xl:col-span-3 flex flex-col gap-4">
+      <main className="app-main min-h-0 flex-1 grid grid-cols-1 lg:grid-cols-12 gap-4 p-4 overflow-hidden">
+        <section className="app-column min-h-0 lg:col-span-3 flex flex-col gap-4 overflow-y-auto">
           <FilePanel
             gcode={dashboard.gcode}
             isLoading={
@@ -151,7 +151,7 @@ export default function App() {
           }
         />
 
-        <section className="xl:col-span-3 flex flex-col gap-4">
+        <section className="app-column min-h-0 lg:col-span-3 flex flex-col gap-4 overflow-y-auto">
           <TemperaturePanel
             hotend={
               dashboard.printer

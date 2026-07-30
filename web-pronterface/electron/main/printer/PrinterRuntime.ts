@@ -1,19 +1,17 @@
 import type {
-    ParsedGcode,
-} from "../../../src/types/gcode";
-
-import type {
     NativeSerialPortInfo,
     RealPrintPayload,
+    TestPrintPayload,
 } from "../../../src/types/printer-ipc";
 
 import type {
     PrinterEvent,
+    PrinterStatus,
 } from "../../../src/types/printer";
 
 import {
-    WorkerEvents,
-} from "../../../src/workers/core/WorkerEvents";
+    PrinterEvents,
+} from "../../../src/workers/core/PrinterEvents";
 
 import {
     PositionTracker,
@@ -50,7 +48,7 @@ interface PrinterRuntimeOptions {
 }
 
 function statusRequiresAwakeComputer(
-    status: string,
+    status: PrinterStatus,
 ): boolean {
     return (
         status === "printing" ||
@@ -62,7 +60,7 @@ function statusRequiresAwakeComputer(
 
 export class PrinterRuntime {
     private readonly events:
-        WorkerEvents;
+        PrinterEvents;
 
     private readonly connection:
         NativeSerialTransport;
@@ -86,13 +84,10 @@ export class PrinterRuntime {
             PrinterRuntimeOptions,
     ) {
         this.events =
-            new WorkerEvents({
+            new PrinterEvents({
                 postMessage: (
-                    message: unknown,
+                    event: PrinterEvent,
                 ) => {
-                    const event =
-                        message as PrinterEvent;
-
                     this.handlePowerState(
                         event,
                     );
@@ -231,20 +226,20 @@ export class PrinterRuntime {
     }
 
     startTestPrint(
-        gcode: ParsedGcode,
+        print: TestPrintPayload,
     ): void {
         this.prints.startTest({
             fileName:
-                gcode.fileName,
+                print.fileName,
 
             printableLines:
-                gcode.printableLines,
+                print.printableLines,
 
             totalLayers:
-                gcode.totalLayers,
+                print.totalLayers,
 
-            segments:
-                gcode.segments,
+            path:
+                print.path,
         });
     }
 

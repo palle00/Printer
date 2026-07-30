@@ -1,6 +1,6 @@
 import type {
-  GcodeSegment,
-} from "../../types/gcode";
+  TestPrintPath,
+} from "../../types/printer-ipc";
 
 import type {
   PrintMode,
@@ -8,7 +8,7 @@ import type {
 } from "../../types/printer";
 
 import type {
-  PreparedCommand,
+  PreparedCommands,
 } from "../gcode/prepareCommands";
 
 export interface BaseSession {
@@ -42,15 +42,15 @@ export interface RealSession
   mode: "real";
 
   commands:
-    PreparedCommand[];
+    PreparedCommands;
 }
 
 export interface TestSession
   extends BaseSession {
   mode: "test";
 
-  segments:
-    GcodeSegment[];
+  path:
+    TestPrintPath;
 
   durationMs: number;
 

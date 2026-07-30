@@ -1,14 +1,18 @@
 import type {
-  GcodePoint,
-  GcodeSegment,
   ParsedGcode,
 } from "../types/gcode";
 
-type LayerMarkerMode =
-  | "numbered"
-  | "layer-change"
-  | "z-comment"
-  | "automatic";
+import {
+  GcodeSegmentStoreBuilder,
+} from "../gcode/GcodeSegmentStore";
+
+import {
+  detectLayerMarkerMode,
+  getNumberedLayer,
+  isLayerChangeMarker,
+  isZCommentMarker,
+  type LayerMarkerMode,
+} from "../gcode/layerMarkers";
 
 interface Position {
   x: number;
@@ -19,7 +23,15 @@ interface Position {
 
 interface ParsedCommand {
   command: string;
-  parameters: Map<string, number>;
+  parameters: {
+    x?: number;
+    y?: number;
+    z?: number;
+    e?: number;
+    i?: number;
+    j?: number;
+    r?: number;
+  };
 }
 
 const EPSILON = 0.000001;
@@ -50,7 +62,7 @@ function parseCommand(rawLine: string): ParsedCommand | null {
   }
 
   const command = commandMatch[1].toUpperCase();
-  const parameters = new Map<string, number>();
+  const parameters: ParsedCommand["parameters"] = {};
 
   const parameterRegex =
     /([A-Z])\s*(-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)/gi;
@@ -58,10 +70,31 @@ function parseCommand(rawLine: string): ParsedCommand | null {
   let match: RegExpExecArray | null;
 
   while ((match = parameterRegex.exec(line)) !== null) {
-    parameters.set(
-      match[1].toUpperCase(),
-      Number(match[2]),
-    );
+    const value = Number(match[2]);
+
+    switch (match[1].toUpperCase()) {
+      case "X":
+        parameters.x = value;
+        break;
+      case "Y":
+        parameters.y = value;
+        break;
+      case "Z":
+        parameters.z = value;
+        break;
+      case "E":
+        parameters.e = value;
+        break;
+      case "I":
+        parameters.i = value;
+        break;
+      case "J":
+        parameters.j = value;
+        break;
+      case "R":
+        parameters.r = value;
+        break;
+    }
   }
 
   return {
@@ -70,64 +103,33 @@ function parseCommand(rawLine: string): ParsedCommand | null {
   };
 }
 
-function detectLayerMarkerMode(
-  lines: string[],
-): LayerMarkerMode {
-  if (
-    lines.some((line) =>
-      /^\s*;\s*LAYER:\s*-?\d+/i.test(line),
-    )
-  ) {
-    return "numbered";
-  }
-
-  if (
-    lines.some((line) =>
-      /^\s*;\s*LAYER_CHANGE/i.test(line),
-    )
-  ) {
-    return "layer-change";
-  }
-
-  if (
-    lines.some((line) =>
-      /^\s*;\s*Z:\s*-?\d+(?:\.\d+)?/i.test(line),
-    )
-  ) {
-    return "z-comment";
-  }
-
-  return "automatic";
-}
-
 function updateCommentLayer(
   rawLine: string,
   mode: LayerMarkerMode,
   currentLayer: number,
 ): number {
   if (mode === "numbered") {
-    const match = rawLine.match(
-      /^\s*;\s*LAYER:\s*(-?\d+)/i,
-    );
+    const numberedLayer =
+      getNumberedLayer(rawLine);
 
-    if (match) {
+    if (numberedLayer !== null) {
       return Math.max(
         1,
-        Number(match[1]) + 1,
+        numberedLayer,
       );
     }
   }
 
   if (
     mode === "layer-change" &&
-    /^\s*;\s*LAYER_CHANGE/i.test(rawLine)
+    isLayerChangeMarker(rawLine)
   ) {
     return currentLayer + 1;
   }
 
   if (
     mode === "z-comment" &&
-    /^\s*;\s*Z:\s*-?\d+(?:\.\d+)?/i.test(rawLine)
+    isZCommentMarker(rawLine)
   ) {
     return currentLayer + 1;
   }
@@ -135,22 +137,8 @@ function updateCommentLayer(
   return currentLayer;
 }
 
-function createPoint(
-  position: Position,
-  extruding: boolean,
-  layer: number,
-): GcodePoint {
-  return {
-    x: position.x,
-    y: position.y,
-    z: position.z,
-    extruding,
-    layer,
-  };
-}
-
 function addLinearSegment(
-  segments: GcodeSegment[],
+  segments: GcodeSegmentStoreBuilder,
   start: Position,
   end: Position,
   layer: number,
@@ -166,23 +154,17 @@ function addLinearSegment(
     return;
   }
 
-  segments.push({
-    start: createPoint(
-      start,
-      extruding,
-      layer,
-    ),
-
-    end: createPoint(
-      end,
-      extruding,
-      layer,
-    ),
-
+  segments.append(
+    start.x,
+    start.y,
+    start.z,
+    end.x,
+    end.y,
+    end.z,
     layer,
     commandIndex,
     extruding,
-  });
+  );
 }
 
 function getArcCenterFromRadius(
@@ -261,7 +243,7 @@ function normalizeArcSweep(
 }
 
 function addArcSegments(
-  segments: GcodeSegment[],
+  segments: GcodeSegmentStoreBuilder,
   start: Position,
   end: Position,
   centerX: number,
@@ -373,10 +355,13 @@ export function parseGcode(
   text: string,
 ): ParsedGcode {
   const lines = text.split(/\r?\n/);
-  const segments: GcodeSegment[] = [];
+  const segmentBuilder =
+    new GcodeSegmentStoreBuilder();
 
   const layerMarkerMode =
     detectLayerMarkerMode(lines);
+  const usesAutomaticLayers =
+    layerMarkerMode === "none";
 
   let absolutePositioning = true;
   let absoluteExtrusion = true;
@@ -457,10 +442,7 @@ export function parseGcode(
       }
 
       case "G92": {
-        const x = parameters.get("X");
-        const y = parameters.get("Y");
-        const z = parameters.get("Z");
-        const e = parameters.get("E");
+        const { x, y, z, e } = parameters;
 
         if (x !== undefined) {
           position.x = x * unitScale;
@@ -507,16 +489,16 @@ export function parseGcode(
     const start = { ...position };
 
     const xParameter =
-      parameters.get("X");
+      parameters.x;
 
     const yParameter =
-      parameters.get("Y");
+      parameters.y;
 
     const zParameter =
-      parameters.get("Z");
+      parameters.z;
 
     const eParameter =
-      parameters.get("E");
+      parameters.e;
 
     const end: Position = {
       x:
@@ -559,7 +541,7 @@ export function parseGcode(
       extrusionAmount > EPSILON;
 
     if (
-      layerMarkerMode === "automatic" &&
+      usesAutomaticLayers &&
       extruding
     ) {
       if (lastAutomaticLayerZ === null) {
@@ -591,7 +573,7 @@ export function parseGcode(
 
     if (isLinear) {
       addLinearSegment(
-        segments,
+        segmentBuilder,
         start,
         end,
         segmentLayer,
@@ -600,13 +582,13 @@ export function parseGcode(
       );
     } else {
       const iParameter =
-        parameters.get("I");
+        parameters.i;
 
       const jParameter =
-        parameters.get("J");
+        parameters.j;
 
       const radiusParameter =
-        parameters.get("R");
+        parameters.r;
 
       let center:
         | { x: number; y: number }
@@ -642,7 +624,7 @@ export function parseGcode(
 
       if (center) {
         addArcSegments(
-          segments,
+          segmentBuilder,
           start,
           end,
           center.x,
@@ -654,7 +636,7 @@ export function parseGcode(
         );
       } else {
         addLinearSegment(
-          segments,
+          segmentBuilder,
           start,
           end,
           segmentLayer,
@@ -670,15 +652,16 @@ export function parseGcode(
     position.e = end.e;
   }
 
-  const extrudingSegments =
-    segments.filter(
-      (segment) => segment.extruding,
-    );
+  const segments =
+    segmentBuilder.finish();
+  let hasExtrudingSegments = false;
 
-  const boundsSegments =
-    extrudingSegments.length > 0
-      ? extrudingSegments
-      : segments;
+  for (let index = 0; index < segments.length; index++) {
+    if (segments.extruding[index] !== 0) {
+      hasExtrudingSegments = true;
+      break;
+    }
+  }
 
   let minX = Number.POSITIVE_INFINITY;
   let maxX = Number.NEGATIVE_INFINITY;
@@ -687,41 +670,56 @@ export function parseGcode(
   let minZ = Number.POSITIVE_INFINITY;
   let maxZ = Number.NEGATIVE_INFINITY;
 
-  for (const segment of boundsSegments) {
+  for (let index = 0; index < segments.length; index++) {
+    if (
+      hasExtrudingSegments &&
+      segments.extruding[index] === 0
+    ) {
+      continue;
+    }
+
+    const offset = index * 6;
+    const startX = segments.coordinates[offset];
+    const startY = segments.coordinates[offset + 1];
+    const startZ = segments.coordinates[offset + 2];
+    const endX = segments.coordinates[offset + 3];
+    const endY = segments.coordinates[offset + 4];
+    const endZ = segments.coordinates[offset + 5];
+
     minX = Math.min(
       minX,
-      segment.start.x,
-      segment.end.x,
+      startX,
+      endX,
     );
 
     maxX = Math.max(
       maxX,
-      segment.start.x,
-      segment.end.x,
+      startX,
+      endX,
     );
 
     minY = Math.min(
       minY,
-      segment.start.y,
-      segment.end.y,
+      startY,
+      endY,
     );
 
     maxY = Math.max(
       maxY,
-      segment.start.y,
-      segment.end.y,
+      startY,
+      endY,
     );
 
     minZ = Math.min(
       minZ,
-      segment.start.z,
-      segment.end.z,
+      startZ,
+      endZ,
     );
 
     maxZ = Math.max(
       maxZ,
-      segment.start.z,
-      segment.end.z,
+      startZ,
+      endZ,
     );
   }
 
@@ -736,7 +734,6 @@ export function parseGcode(
 
   return {
     fileName,
-    text,
     lines,
     segments,
     totalLines: lines.length,

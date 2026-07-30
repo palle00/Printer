@@ -1,8 +1,4 @@
 import type {
-    ParsedGcode,
-} from "./gcode";
-
-import type {
     PrinterEvent,
 } from "./printer";
 
@@ -10,6 +6,20 @@ export interface RealPrintPayload {
     fileName: string;
     lines: string[];
     totalLayers: number;
+}
+
+export interface TestPrintPath {
+    coordinates: Float32Array<ArrayBufferLike>;
+    commandIndexes: Uint32Array<ArrayBufferLike>;
+    layers: Uint32Array<ArrayBufferLike>;
+    extruding: Uint8Array<ArrayBufferLike>;
+}
+
+export interface TestPrintPayload {
+    fileName: string;
+    printableLines: number;
+    totalLayers: number;
+    path: TestPrintPath;
 }
 
 export const PRINTER_IPC = {
@@ -92,7 +102,7 @@ export interface PrinterApi {
     ): Promise<void>;
 
     startTestPrint(
-        gcode: ParsedGcode,
+        print: TestPrintPayload,
     ): Promise<void>;
 
     pausePrint(): Promise<void>;

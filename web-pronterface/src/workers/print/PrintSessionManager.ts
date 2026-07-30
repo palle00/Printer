@@ -4,15 +4,19 @@ import {
 } from "../../print/printMath";
 
 import type {
+  RealPrintPayload,
+  TestPrintPayload,
+} from "../../types/printer-ipc";
+
+import type {
   PrinterPosition,
   PrinterStatus,
-  PrinterWorkerCommand,
 } from "../../types/printer";
 
 import type {
-  WorkerEvents,
+  PrinterEvents,
   IdlePrinterStatus,
-} from "../core/WorkerEvents";
+} from "../core/PrinterEvents";
 
 import {
   prepareCommands,
@@ -54,22 +58,8 @@ import {
 
 const TEST_STOP_DELAY_MS = 300;
 
-type StartRealPayload = Extract<
-  PrinterWorkerCommand,
-  {
-    type: "START_REAL_PRINT";
-  }
->["payload"];
-
-type StartTestPayload = Extract<
-  PrinterWorkerCommand,
-  {
-    type: "START_TEST_PRINT";
-  }
->["payload"];
-
 interface PrintSessionManagerOptions {
-  events: WorkerEvents;
+  events: PrinterEvents;
 
   serialQueue: SerialQueue;
 
@@ -176,7 +166,7 @@ export class PrintSessionManager {
   }
 
   startReal(
-    payload: StartRealPayload,
+    payload: RealPrintPayload,
   ): void {
     if (
       !this.options.isConnected()
@@ -207,7 +197,7 @@ export class PrintSessionManager {
       ...createBaseSession(
         "real",
         payload.fileName,
-        commands.length,
+        commands.texts.length,
         payload.totalLayers,
       ),
 
@@ -222,7 +212,7 @@ export class PrintSessionManager {
 
       payload.fileName,
 
-      commands.length,
+      commands.texts.length,
 
       payload.totalLayers,
     );
@@ -235,7 +225,7 @@ export class PrintSessionManager {
   }
 
   startTest(
-    payload: StartTestPayload,
+    payload: TestPrintPayload,
   ): void {
     if (this.isActive) {
       return;
@@ -245,7 +235,7 @@ export class PrintSessionManager {
 
     const durationSeconds =
       estimateTestDurationSeconds(
-        payload.segments.length,
+        payload.path.commandIndexes.length,
       );
 
     const session:
@@ -262,8 +252,8 @@ export class PrintSessionManager {
 
       mode: "test",
 
-      segments:
-        payload.segments,
+      path:
+        payload.path,
 
       durationMs:
         durationSeconds * 1000,
@@ -293,14 +283,14 @@ export class PrintSessionManager {
       },
     );
 
-    const firstSegment =
-      payload.segments[0];
+    const hasFirstSegment =
+      payload.path.commandIndexes.length > 0;
 
-    if (firstSegment) {
+    if (hasFirstSegment) {
       this.emitPosition({
-        x: firstSegment.start.x,
-        y: firstSegment.start.y,
-        z: firstSegment.start.z,
+        x: payload.path.coordinates[0],
+        y: payload.path.coordinates[1],
+        z: payload.path.coordinates[2],
         e: 0,
       });
     } else {

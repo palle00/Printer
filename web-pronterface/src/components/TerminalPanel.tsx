@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -14,7 +15,7 @@ interface TerminalPanelProps {
   clearTerminal: () => void;
 }
 
-export default function TerminalPanel({
+function TerminalPanel({
   lines,
   connected,
   hasActivePrint,
@@ -61,7 +62,7 @@ export default function TerminalPanel({
     <Panel title="Terminal">
       <div
         ref={terminalRef}
-        className="h-80 bg-black rounded p-3 overflow-y-auto font-mono text-xs text-green-400 mb-3 border border-gray-900"
+        className="h-[clamp(8rem,28vh,20rem)] bg-black rounded p-3 overflow-y-auto font-mono text-xs text-green-400 mb-3 border border-gray-900"
       >
         {lines.length === 0 ? (
           <span className="text-gray-700">
@@ -114,3 +115,5 @@ export default function TerminalPanel({
     </Panel>
   );
 }
+
+export default memo(TerminalPanel);

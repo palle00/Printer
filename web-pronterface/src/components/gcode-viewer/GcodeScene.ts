@@ -16,7 +16,7 @@ import {
 
 import {
   SceneRenderer,
-} from "./sceneRenderer";
+} from "./WebglSceneRenderer";
 
 import {
   ToolpathRenderer,

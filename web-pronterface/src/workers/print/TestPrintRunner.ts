@@ -78,7 +78,7 @@ export class TestPrintRunner {
 
     const frame =
       calculateTestFrame(
-        session.segments,
+        session.path,
 
         session.totalLines,
         session.totalLayers,

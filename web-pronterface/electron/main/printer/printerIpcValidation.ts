@@ -1,0 +1,79 @@
+import type {
+  RealPrintPayload,
+  TestPrintPayload,
+} from "../../../src/types/printer-ipc";
+
+export function assertBaudRate(value: unknown): number {
+  const baudRate = value === undefined ? 115200 : Number(value);
+
+  if (
+    !Number.isInteger(baudRate) ||
+    baudRate < 1200 ||
+    baudRate > 2_000_000
+  ) {
+    throw new Error("Invalid serial baud rate.");
+  }
+
+  return baudRate;
+}
+
+export function assertRealPrintPayload(
+  value: unknown,
+): asserts value is RealPrintPayload {
+  if (!value || typeof value !== "object") {
+    throw new Error("Invalid real-print payload.");
+  }
+
+  const print = value as Partial<RealPrintPayload>;
+
+  if (
+    typeof print.fileName !== "string" ||
+    print.fileName.trim().length === 0
+  ) {
+    throw new Error("Print file name is missing.");
+  }
+
+  if (
+    !Array.isArray(print.lines) ||
+    !print.lines.every((line) => typeof line === "string")
+  ) {
+    throw new Error("Print payload contains invalid G-code lines.");
+  }
+
+  if (
+    !Number.isInteger(print.totalLayers) ||
+    (print.totalLayers ?? -1) < 0
+  ) {
+    throw new Error("Print payload contains an invalid layer count.");
+  }
+}
+
+export function assertTestPrintPayload(
+  value: unknown,
+): asserts value is TestPrintPayload {
+  if (!value || typeof value !== "object") {
+    throw new Error("Invalid test-print payload.");
+  }
+
+  const print = value as Partial<TestPrintPayload>;
+  const path = print.path;
+
+  if (
+    typeof print.fileName !== "string" ||
+    print.fileName.trim().length === 0 ||
+    !Number.isInteger(print.totalLayers) ||
+    (print.totalLayers ?? -1) < 0 ||
+    !Number.isInteger(print.printableLines) ||
+    (print.printableLines ?? -1) < 0 ||
+    !path ||
+    !(path.coordinates instanceof Float32Array) ||
+    !(path.commandIndexes instanceof Uint32Array) ||
+    !(path.layers instanceof Uint32Array) ||
+    !(path.extruding instanceof Uint8Array) ||
+    path.coordinates.length !== path.commandIndexes.length * 6 ||
+    path.layers.length !== path.commandIndexes.length ||
+    path.extruding.length !== path.commandIndexes.length
+  ) {
+    throw new Error("Invalid test-print payload.");
+  }
+}

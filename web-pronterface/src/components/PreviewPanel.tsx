@@ -68,8 +68,8 @@ export default function PreviewPanel({
   ]);
 
   return (
-    <section className="xl:col-span-6 bg-[#121620] border border-gray-800 rounded-lg flex flex-col overflow-hidden min-h-[600px]">
-      <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center gap-4">
+    <section className="min-h-0 h-full lg:col-span-6 bg-[#121620] border border-gray-800 rounded-lg flex flex-col overflow-hidden">
+      <div className="shrink-0 px-4 py-3 border-b border-gray-800 flex justify-between items-center gap-4">
         <div>
           <h2 className="text-xs uppercase tracking-wider font-bold text-gray-400">
             G-code Preview
@@ -160,7 +160,7 @@ export default function PreviewPanel({
         )}
       </div>
 
-      <div className="relative flex-1 min-h-[500px]">
+      <div className="relative flex-1 min-h-0">
         <GcodeViewer
           gcode={gcode}
           previewLayer={previewLayer}
@@ -208,7 +208,7 @@ export default function PreviewPanel({
           )}
       </div>
 
-      <div className="bg-[#181d2c] border-t border-gray-800 px-4 py-2 flex justify-between text-[10px] font-mono">
+      <div className="shrink-0 bg-[#181d2c] border-t border-gray-800 px-4 py-2 flex justify-between text-[10px] font-mono">
         <div className="flex gap-4">
           <span className="text-blue-400">
             ● PLANNED

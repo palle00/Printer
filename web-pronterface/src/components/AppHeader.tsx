@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { PrinterStatus } from "../types/printer";
 
 interface AppHeaderProps {
@@ -33,7 +34,7 @@ const statusColors: Record<
   stopping: "bg-red-500",
 };
 
-export default function AppHeader({
+function AppHeader({
   status,
   isTestMode,
   connected,
@@ -97,3 +98,5 @@ export default function AppHeader({
     </header>
   );
 }
+
+export default memo(AppHeader);

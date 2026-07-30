@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useMemo,
   useState,
@@ -18,7 +19,7 @@ interface TemperaturePanelProps {
   sendGcode: (gcode: string) => void;
 }
 
-export default function TemperaturePanel({
+function TemperaturePanel({
   hotend,
   targetHotend,
   bed,
@@ -225,3 +226,5 @@ function TemperatureControl({
     </div>
   );
 }
+
+export default memo(TemperaturePanel);

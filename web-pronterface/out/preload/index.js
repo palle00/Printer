@@ -42,10 +42,10 @@ const printerApi = Object.freeze({
       print
     );
   },
-  startTestPrint(gcode) {
+  startTestPrint(print) {
     return electron.ipcRenderer.invoke(
       PRINTER_IPC.startTestPrint,
-      gcode
+      print
     );
   },
   pausePrint() {

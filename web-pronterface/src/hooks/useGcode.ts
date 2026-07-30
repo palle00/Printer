@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useRef,
   useState,
   type ChangeEvent,
 } from "react";
@@ -8,6 +9,9 @@ import type { ParsedGcode } from "../types/gcode";
 import { parseGcode } from "../utils/gcodeParser";
 
 export function useGcode() {
+  const loadGeneration =
+    useRef(0);
+
   const [gcode, setGcode] =
     useState<ParsedGcode | null>(null);
 
@@ -16,19 +20,43 @@ export function useGcode() {
 
   const loadFile = useCallback(
     async (file: File): Promise<void> => {
+      const generation =
+        ++loadGeneration.current;
+
       setIsLoading(true);
       setError(null);
+      setGcode(null);
 
       try {
         const text = await file.text();
+
+        if (
+          generation !==
+          loadGeneration.current
+        ) {
+          return;
+        }
 
         if (!text.trim()) {
           throw new Error("The selected file is empty.");
         }
 
         const parsed = parseGcode(file.name, text);
-        setGcode(parsed);
+
+        if (
+          generation ===
+          loadGeneration.current
+        ) {
+          setGcode(parsed);
+        }
       } catch (loadError) {
+        if (
+          generation !==
+          loadGeneration.current
+        ) {
+          return;
+        }
+
         setGcode(null);
 
         setError(
@@ -37,7 +65,12 @@ export function useGcode() {
             : String(loadError),
         );
       } finally {
-        setIsLoading(false);
+        if (
+          generation ===
+          loadGeneration.current
+        ) {
+          setIsLoading(false);
+        }
       }
     },
     [],
@@ -60,7 +93,9 @@ export function useGcode() {
   );
 
   const clearFile = useCallback(() => {
+    loadGeneration.current++;
     setGcode(null);
+    setIsLoading(false);
     setError(null);
   }, []);
 

@@ -1,6 +1,6 @@
 import type {
-  GcodeSegment,
-} from "../types/gcode";
+  TestPrintPath,
+} from "../types/printer-ipc";
 
 import type {
   PrintProgress,
@@ -156,7 +156,7 @@ export function createPrintProgress({
 }
 
 export function calculateTestFrame(
-  segments: GcodeSegment[],
+  path: TestPrintPath,
   printableLines: number,
   totalLayers: number,
   elapsedMilliseconds: number,
@@ -175,7 +175,10 @@ export function calculateTestFrame(
     1,
   );
 
-  if (segments.length === 0) {
+  const segmentCount =
+    path.commandIndexes.length;
+
+  if (segmentCount === 0) {
     return {
       finished: true,
       ratio: 1,
@@ -196,15 +199,15 @@ export function calculateTestFrame(
   }
 
   const segmentProgress =
-    ratio * segments.length;
+    ratio * segmentCount;
 
   const segmentIndex = Math.min(
-    segments.length - 1,
+    segmentCount - 1,
     Math.floor(segmentProgress),
   );
 
-  const segment =
-    segments[segmentIndex];
+  const coordinateOffset =
+    segmentIndex * 6;
 
   const localRatio =
     ratio >= 1
@@ -214,30 +217,51 @@ export function calculateTestFrame(
 
   const position: PrinterPosition = {
     x:
-      segment.start.x +
+      path.coordinates[
+        coordinateOffset
+      ] +
       (
-        segment.end.x -
-        segment.start.x
+        path.coordinates[
+          coordinateOffset + 3
+        ] -
+        path.coordinates[
+          coordinateOffset
+        ]
       ) *
         localRatio,
 
     y:
-      segment.start.y +
+      path.coordinates[
+        coordinateOffset + 1
+      ] +
       (
-        segment.end.y -
-        segment.start.y
+        path.coordinates[
+          coordinateOffset + 4
+        ] -
+        path.coordinates[
+          coordinateOffset + 1
+        ]
       ) *
         localRatio,
 
     z:
-      segment.start.z +
+      path.coordinates[
+        coordinateOffset + 2
+      ] +
       (
-        segment.end.z -
-        segment.start.z
+        path.coordinates[
+          coordinateOffset + 5
+        ] -
+        path.coordinates[
+          coordinateOffset + 2
+        ]
       ) *
         localRatio,
 
-    e: segment.extruding
+    e:
+      path.extruding[
+        segmentIndex
+      ] !== 0
       ? localRatio
       : 0,
   };
@@ -251,13 +275,17 @@ export function calculateTestFrame(
         ? printableLines
         : Math.max(
             0,
-            segment.commandIndex - 1,
+            path.commandIndexes[
+              segmentIndex
+            ] - 1,
           ),
 
     currentLayer:
       ratio >= 1
         ? totalLayers
-        : segment.layer,
+        : path.layers[
+            segmentIndex
+          ],
 
     position,
   };

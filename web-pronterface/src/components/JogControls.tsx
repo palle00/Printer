@@ -1,4 +1,7 @@
-import { useState } from "react";
+import {
+  memo,
+  useState,
+} from "react";
 import {
   ControlButton,
   Panel,
@@ -10,7 +13,7 @@ interface JogControlsProps {
   sendGcode: (gcode: string) => void;
 }
 
-export default function JogControls({
+function JogControls({
   connected,
   disabled,
   sendGcode,
@@ -192,3 +195,5 @@ export default function JogControls({
     </Panel>
   );
 }
+
+export default memo(JogControls);

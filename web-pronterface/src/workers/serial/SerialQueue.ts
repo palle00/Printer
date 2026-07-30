@@ -1,6 +1,6 @@
 import type {
-  WorkerEvents,
-} from "../core/WorkerEvents";
+  PrinterEvents,
+} from "../core/PrinterEvents";
 
 import {
   stripGcodeLine,
@@ -44,7 +44,7 @@ export class SerialQueue {
       SerialTransport,
 
     private readonly events:
-      WorkerEvents,
+      PrinterEvents,
 
     private readonly onAcknowledgedCommand:
       AcknowledgedCommandHandler,
@@ -97,18 +97,16 @@ export class SerialQueue {
   async sendMany(
     gcode: string,
   ): Promise<void> {
-    const commands = gcode
-      .split(/\r?\n/)
-      .map((line) =>
-        stripGcodeLine(line),
-      )
-      .filter(
-        (command) =>
-          command.length > 0,
-      );
+    const lines =
+      gcode.split(/\r?\n/);
 
-    for (const command of commands) {
-      await this.queue(command);
+    for (const line of lines) {
+      const command =
+        stripGcodeLine(line);
+
+      if (command) {
+        await this.queue(command);
+      }
     }
   }
 

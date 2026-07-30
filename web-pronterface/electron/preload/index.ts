@@ -5,10 +5,6 @@ import {
 } from "electron";
 
 import type {
-  ParsedGcode,
-} from "../../src/types/gcode";
-
-import type {
   DesktopApi,
 } from "../../src/types/desktop";
 
@@ -18,6 +14,7 @@ import {
   type PrinterApi,
   type PrinterConnectionResult,
   type RealPrintPayload,
+  type TestPrintPayload,
 } from "../../src/types/printer-ipc";
 
 import type {
@@ -73,11 +70,11 @@ const printerApi: PrinterApi =
     },
 
     startTestPrint(
-      gcode: ParsedGcode,
+      print: TestPrintPayload,
     ): Promise<void> {
       return ipcRenderer.invoke(
         PRINTER_IPC.startTestPrint,
-        gcode,
+        print,
       ) as Promise<void>;
     },
 

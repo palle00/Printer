@@ -61,7 +61,7 @@ class PrintSleepBlocker {
     this.stop();
   }
 }
-class WorkerEvents {
+class PrinterEvents {
   constructor(target) {
     this.target = target;
   }
@@ -430,7 +430,7 @@ function createPrintProgress({
     )
   };
 }
-function calculateTestFrame(segments, printableLines, totalLayers, elapsedMilliseconds, durationMilliseconds) {
+function calculateTestFrame(path2, printableLines, totalLayers, elapsedMilliseconds, durationMilliseconds) {
   const safeDuration = Math.max(
     1,
     durationMilliseconds
@@ -440,7 +440,8 @@ function calculateTestFrame(segments, printableLines, totalLayers, elapsedMillis
     0,
     1
   );
-  if (segments.length === 0) {
+  const segmentCount = path2.commandIndexes.length;
+  if (segmentCount === 0) {
     return {
       finished: true,
       ratio: 1,
@@ -454,29 +455,57 @@ function calculateTestFrame(segments, printableLines, totalLayers, elapsedMillis
       }
     };
   }
-  const segmentProgress = ratio * segments.length;
+  const segmentProgress = ratio * segmentCount;
   const segmentIndex = Math.min(
-    segments.length - 1,
+    segmentCount - 1,
     Math.floor(segmentProgress)
   );
-  const segment = segments[segmentIndex];
+  const coordinateOffset = segmentIndex * 6;
   const localRatio = ratio >= 1 ? 1 : segmentProgress - segmentIndex;
   const position = {
-    x: segment.start.x + (segment.end.x - segment.start.x) * localRatio,
-    y: segment.start.y + (segment.end.y - segment.start.y) * localRatio,
-    z: segment.start.z + (segment.end.z - segment.start.z) * localRatio,
-    e: segment.extruding ? localRatio : 0
+    x: path2.coordinates[coordinateOffset] + (path2.coordinates[coordinateOffset + 3] - path2.coordinates[coordinateOffset]) * localRatio,
+    y: path2.coordinates[coordinateOffset + 1] + (path2.coordinates[coordinateOffset + 4] - path2.coordinates[coordinateOffset + 1]) * localRatio,
+    z: path2.coordinates[coordinateOffset + 2] + (path2.coordinates[coordinateOffset + 5] - path2.coordinates[coordinateOffset + 2]) * localRatio,
+    e: path2.extruding[segmentIndex] !== 0 ? localRatio : 0
   };
   return {
     finished: ratio >= 1,
     ratio,
     currentLine: ratio >= 1 ? printableLines : Math.max(
       0,
-      segment.commandIndex - 1
+      path2.commandIndexes[segmentIndex] - 1
     ),
-    currentLayer: ratio >= 1 ? totalLayers : segment.layer,
+    currentLayer: ratio >= 1 ? totalLayers : path2.layers[segmentIndex],
     position
   };
+}
+const NUMBERED_LAYER_PATTERN = /^\s*;\s*LAYER:\s*(-?\d+)/i;
+const LAYER_CHANGE_PATTERN = /^\s*;\s*LAYER_CHANGE\b/i;
+const Z_COMMENT_PATTERN = /^\s*;\s*Z:\s*[-+]?(?:\d+(?:\.\d*)?|\.\d+)/i;
+function detectLayerMarkerMode(lines) {
+  let hasLayerChange = false;
+  let hasZComment = false;
+  for (const line of lines) {
+    if (NUMBERED_LAYER_PATTERN.test(line)) {
+      return "numbered";
+    }
+    hasLayerChange ||= LAYER_CHANGE_PATTERN.test(line);
+    hasZComment ||= Z_COMMENT_PATTERN.test(line);
+  }
+  if (hasLayerChange) {
+    return "layer-change";
+  }
+  return hasZComment ? "z-comment" : "none";
+}
+function getNumberedLayer(line) {
+  const match = line.match(NUMBERED_LAYER_PATTERN);
+  return match ? Number(match[1]) + 1 : null;
+}
+function isLayerChangeMarker(line) {
+  return LAYER_CHANGE_PATTERN.test(line);
+}
+function isZCommentMarker(line) {
+  return Z_COMMENT_PATTERN.test(line);
 }
 function stripGcodeLine(rawLine) {
   const withoutComment = rawLine.split(";")[0];
@@ -485,30 +514,6 @@ function stripGcodeLine(rawLine) {
     /^\s*N\d+\s+/i,
     ""
   ).trim();
-}
-function detectLayerMarkerMode(lines) {
-  if (lines.some(
-    (line) => /^\s*;\s*LAYER:\s*\d+/i.test(
-      line
-    )
-  )) {
-    return "numbered";
-  }
-  if (lines.some(
-    (line) => /^\s*;\s*LAYER_CHANGE\b/i.test(
-      line
-    )
-  )) {
-    return "change";
-  }
-  if (lines.some(
-    (line) => /^\s*;\s*Z:\s*[-+]?\d/i.test(
-      line
-    )
-  )) {
-    return "z";
-  }
-  return "none";
 }
 function clampLayer(layer, totalLayers) {
   return Math.min(
@@ -521,28 +526,24 @@ function clampLayer(layer, totalLayers) {
 }
 function prepareCommands(lines, totalLayers) {
   const markerMode = detectLayerMarkerMode(lines);
-  const commands = [];
+  const texts = [];
+  const layers = new Uint32Array(lines.length);
+  let commandIndex = 0;
   let currentLayer = 1;
   let sequentialLayer = 0;
   for (const rawLine of lines) {
     if (markerMode === "numbered") {
-      const match = rawLine.match(
-        /^\s*;\s*LAYER:\s*(\d+)/i
-      );
-      if (match) {
-        currentLayer = Number(match[1]) + 1;
+      const numberedLayer = getNumberedLayer(rawLine);
+      if (numberedLayer !== null) {
+        currentLayer = numberedLayer;
       }
-    } else if (markerMode === "change" && /^\s*;\s*LAYER_CHANGE\b/i.test(
-      rawLine
-    )) {
+    } else if (markerMode === "layer-change" && isLayerChangeMarker(rawLine)) {
       sequentialLayer++;
       currentLayer = Math.max(
         1,
         sequentialLayer
       );
-    } else if (markerMode === "z" && /^\s*;\s*Z:\s*[-+]?\d/i.test(
-      rawLine
-    )) {
+    } else if (markerMode === "z-comment" && isZCommentMarker(rawLine)) {
       sequentialLayer++;
       currentLayer = Math.max(
         1,
@@ -553,15 +554,17 @@ function prepareCommands(lines, totalLayers) {
     if (!command || command === "%") {
       continue;
     }
-    commands.push({
-      text: command,
-      layer: clampLayer(
-        currentLayer,
-        totalLayers
-      )
-    });
+    texts.push(command);
+    layers[commandIndex] = clampLayer(
+      currentLayer,
+      totalLayers
+    );
+    commandIndex++;
   }
-  return commands;
+  return {
+    texts,
+    layers: layers.subarray(0, commandIndex)
+  };
 }
 function isActiveStatus(status) {
   return status === "printing" || status === "pausing" || status === "paused" || status === "stopping";
@@ -619,7 +622,7 @@ class RealPrintRunner {
   context;
   async run(session) {
     try {
-      for (let index = 0; index < session.commands.length; index++) {
+      for (let index = 0; index < session.commands.texts.length; index++) {
         if (!this.context.isCurrent(
           session
         ) || session.stopRequested) {
@@ -633,9 +636,9 @@ class RealPrintRunner {
         ) || session.stopRequested) {
           break;
         }
-        const command = session.commands[index];
+        const command = session.commands.texts[index];
         await this.queue.queue(
-          command.text
+          command
         );
         if (!this.context.isCurrent(
           session
@@ -643,7 +646,7 @@ class RealPrintRunner {
           return;
         }
         session.currentLine = index + 1;
-        session.currentLayer = command.layer;
+        session.currentLayer = session.commands.layers[index];
         this.context.emitProgress(
           session
         );
@@ -750,7 +753,7 @@ class TestPrintRunner {
       session
     );
     const frame = calculateTestFrame(
-      session.segments,
+      session.path,
       session.totalLines,
       session.totalLayers,
       elapsedMilliseconds,
@@ -858,7 +861,7 @@ class PrintSessionManager {
       ...createBaseSession(
         "real",
         payload.fileName,
-        commands.length,
+        commands.texts.length,
         payload.totalLayers
       ),
       mode: "real",
@@ -868,7 +871,7 @@ class PrintSessionManager {
     this.options.events.printStarted(
       "real",
       payload.fileName,
-      commands.length,
+      commands.texts.length,
       payload.totalLayers
     );
     this.emitProgress(session);
@@ -882,7 +885,7 @@ class PrintSessionManager {
     }
     this.clearPendingTestStop();
     const durationSeconds = estimateTestDurationSeconds(
-      payload.segments.length
+      payload.path.commandIndexes.length
     );
     const session = {
       ...createBaseSession(
@@ -892,7 +895,7 @@ class PrintSessionManager {
         payload.totalLayers
       ),
       mode: "test",
-      segments: payload.segments,
+      path: payload.path,
       durationMs: durationSeconds * 1e3,
       timer: null
     };
@@ -910,12 +913,12 @@ class PrintSessionManager {
         estimatedDurationSeconds: durationSeconds
       }
     );
-    const firstSegment = payload.segments[0];
-    if (firstSegment) {
+    const hasFirstSegment = payload.path.commandIndexes.length > 0;
+    if (hasFirstSegment) {
       this.emitPosition({
-        x: firstSegment.start.x,
-        y: firstSegment.start.y,
-        z: firstSegment.start.z,
+        x: payload.path.coordinates[0],
+        y: payload.path.coordinates[1],
+        z: payload.path.coordinates[2],
         e: 0
       });
     } else {
@@ -1228,13 +1231,12 @@ class SerialQueue {
     return task;
   }
   async sendMany(gcode) {
-    const commands = gcode.split(/\r?\n/).map(
-      (line) => stripGcodeLine(line)
-    ).filter(
-      (command) => command.length > 0
-    );
-    for (const command of commands) {
-      await this.queue(command);
+    const lines = gcode.split(/\r?\n/);
+    for (const line of lines) {
+      const command = stripGcodeLine(line);
+      if (command) {
+        await this.queue(command);
+      }
     }
   }
   resolveAcknowledgement() {
@@ -1556,9 +1558,8 @@ function statusRequiresAwakeComputer(status) {
 class PrinterRuntime {
   constructor(options) {
     this.options = options;
-    this.events = new WorkerEvents({
-      postMessage: (message) => {
-        const event = message;
+    this.events = new PrinterEvents({
+      postMessage: (event) => {
         this.handlePowerState(
           event
         );
@@ -1643,12 +1644,12 @@ class PrinterRuntime {
   startPrint(print) {
     this.prints.startReal(print);
   }
-  startTestPrint(gcode) {
+  startTestPrint(print) {
     this.prints.startTest({
-      fileName: gcode.fileName,
-      printableLines: gcode.printableLines,
-      totalLayers: gcode.totalLayers,
-      segments: gcode.segments
+      fileName: print.fileName,
+      printableLines: print.printableLines,
+      totalLayers: print.totalLayers,
+      path: print.path
     });
   }
   pausePrint() {
@@ -1766,112 +1767,78 @@ class PrinterRuntime {
     }
   }
 }
-function assertTrustedSender(event, window) {
-  if (!window || window.isDestroyed() || event.sender !== window.webContents) {
-    throw new Error(
-      "Unauthorized printer request."
-    );
+function formatPortLabel(port) {
+  const description = [
+    port.manufacturer,
+    port.vendorId && port.productId ? `VID ${port.vendorId} / PID ${port.productId}` : null
+  ].filter((value) => Boolean(value));
+  return description.length > 0 ? `${port.path} - ${description.join(" - ")}` : port.path;
+}
+async function choosePrinterPort(window, ports) {
+  if (ports.length === 0) {
+    await electron.dialog.showMessageBox(window, {
+      type: "warning",
+      title: "No serial ports found",
+      message: "No serial devices were detected.",
+      detail: "Connect the printer through USB, verify its driver is installed, and try again.",
+      buttons: ["OK"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true
+    });
+    return null;
   }
-  return window;
+  const labels = ports.map(formatPortLabel);
+  const cancelIndex = labels.length;
+  const result = await electron.dialog.showMessageBox(window, {
+    type: "question",
+    title: "Select printer port",
+    message: "Choose the USB serial port used by your 3D printer.",
+    detail: "On Windows, the printer normally appears as COM3, COM4, or another COM port.",
+    buttons: [...labels, "Cancel"],
+    defaultId: 0,
+    cancelId: cancelIndex,
+    noLink: true
+  });
+  return ports[result.response] ?? null;
 }
 function assertBaudRate(value) {
   const baudRate = value === void 0 ? 115200 : Number(value);
-  if (!Number.isInteger(
-    baudRate
-  ) || baudRate < 1200 || baudRate > 2e6) {
-    throw new Error(
-      "Invalid serial baud rate."
-    );
+  if (!Number.isInteger(baudRate) || baudRate < 1200 || baudRate > 2e6) {
+    throw new Error("Invalid serial baud rate.");
   }
   return baudRate;
 }
 function assertRealPrintPayload(value) {
   if (!value || typeof value !== "object") {
-    throw new Error(
-      "Invalid real-print payload."
-    );
+    throw new Error("Invalid real-print payload.");
   }
   const print = value;
   if (typeof print.fileName !== "string" || print.fileName.trim().length === 0) {
-    throw new Error(
-      "Print file name is missing."
-    );
+    throw new Error("Print file name is missing.");
   }
-  if (!Array.isArray(print.lines) || !print.lines.every(
-    (line) => typeof line === "string"
-  )) {
-    throw new Error(
-      "Print payload contains invalid G-code lines."
-    );
+  if (!Array.isArray(print.lines) || !print.lines.every((line) => typeof line === "string")) {
+    throw new Error("Print payload contains invalid G-code lines.");
   }
-  if (typeof print.totalLayers !== "number" || !Number.isFinite(
-    print.totalLayers
-  ) || print.totalLayers < 0) {
-    throw new Error(
-      "Print payload contains an invalid layer count."
-    );
+  if (!Number.isInteger(print.totalLayers) || (print.totalLayers ?? -1) < 0) {
+    throw new Error("Print payload contains an invalid layer count.");
   }
 }
-function assertParsedGcode(value) {
+function assertTestPrintPayload(value) {
   if (!value || typeof value !== "object") {
-    throw new Error(
-      "Invalid test-print payload."
-    );
+    throw new Error("Invalid test-print payload.");
   }
-  const gcode = value;
-  if (typeof gcode.fileName !== "string" || !Array.isArray(gcode.lines) || !Array.isArray(gcode.segments) || typeof gcode.totalLayers !== "number" || typeof gcode.printableLines !== "number") {
-    throw new Error(
-      "Invalid test-print payload."
-    );
+  const print = value;
+  const path2 = print.path;
+  if (typeof print.fileName !== "string" || print.fileName.trim().length === 0 || !Number.isInteger(print.totalLayers) || (print.totalLayers ?? -1) < 0 || !Number.isInteger(print.printableLines) || (print.printableLines ?? -1) < 0 || !path2 || !(path2.coordinates instanceof Float32Array) || !(path2.commandIndexes instanceof Uint32Array) || !(path2.layers instanceof Uint32Array) || !(path2.extruding instanceof Uint8Array) || path2.coordinates.length !== path2.commandIndexes.length * 6 || path2.layers.length !== path2.commandIndexes.length || path2.extruding.length !== path2.commandIndexes.length) {
+    throw new Error("Invalid test-print payload.");
   }
 }
-function formatPortLabel(port) {
-  const description = [
-    port.manufacturer,
-    port.vendorId && port.productId ? `VID ${port.vendorId} / PID ${port.productId}` : null
-  ].filter(
-    (value) => Boolean(value)
-  );
-  return description.length > 0 ? `${port.path} — ${description.join(" — ")}` : port.path;
-}
-async function choosePort(window, ports) {
-  if (ports.length === 0) {
-    await electron.dialog.showMessageBox(
-      window,
-      {
-        type: "warning",
-        title: "No serial ports found",
-        message: "No serial devices were detected.",
-        detail: "Connect the printer through USB, verify its driver is installed, and try again.",
-        buttons: ["OK"],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true
-      }
-    );
-    return null;
+function assertTrustedSender(event, window) {
+  if (!window || window.isDestroyed() || event.sender !== window.webContents) {
+    throw new Error("Unauthorized printer request.");
   }
-  const labels = ports.map(
-    formatPortLabel
-  );
-  const cancelIndex = labels.length;
-  const result = await electron.dialog.showMessageBox(
-    window,
-    {
-      type: "question",
-      title: "Select printer port",
-      message: "Choose the USB serial port used by your 3D printer.",
-      detail: "On Windows, the printer normally appears as COM3, COM4, or another COM port.",
-      buttons: [
-        ...labels,
-        "Cancel"
-      ],
-      defaultId: 0,
-      cancelId: cancelIndex,
-      noLink: true
-    }
-  );
-  return ports[result.response] ?? null;
+  return window;
 }
 function registerPrinterIpc({
   getWindow,
@@ -1890,158 +1857,83 @@ function registerPrinterIpc({
     PRINTER_IPC.resetPrint
   ];
   for (const channel of channels) {
-    electron.ipcMain.removeHandler(
-      channel
-    );
+    electron.ipcMain.removeHandler(channel);
   }
-  electron.ipcMain.handle(
-    PRINTER_IPC.listPorts,
-    async (event) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      return runtime.listPorts();
-    }
-  );
+  electron.ipcMain.handle(PRINTER_IPC.listPorts, (event) => {
+    assertTrustedSender(event, getWindow());
+    return runtime.listPorts();
+  });
   electron.ipcMain.handle(
     PRINTER_IPC.connect,
     async (event, requestedBaudRate) => {
-      const window = assertTrustedSender(
-        event,
-        getWindow()
-      );
-      const baudRate = assertBaudRate(
-        requestedBaudRate
-      );
-      const ports = await runtime.listPorts();
-      const selectedPort = await choosePort(
+      const window = assertTrustedSender(event, getWindow());
+      const baudRate = assertBaudRate(requestedBaudRate);
+      const selectedPort = await choosePrinterPort(
         window,
-        ports
+        await runtime.listPorts()
       );
       if (!selectedPort) {
         return null;
       }
-      await runtime.connect(
-        selectedPort.path,
-        baudRate
-      );
+      await runtime.connect(selectedPort.path, baudRate);
       return {
         path: selectedPort.path,
         baudRate
       };
     }
   );
-  electron.ipcMain.handle(
-    PRINTER_IPC.disconnect,
-    async (event) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      await runtime.disconnect();
-    }
-  );
+  electron.ipcMain.handle(PRINTER_IPC.disconnect, async (event) => {
+    assertTrustedSender(event, getWindow());
+    await runtime.disconnect();
+  });
   electron.ipcMain.handle(
     PRINTER_IPC.sendGcode,
     async (event, value) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
+      assertTrustedSender(event, getWindow());
       if (typeof value !== "string") {
-        throw new Error(
-          "G-code must be a string."
-        );
+        throw new Error("G-code must be a string.");
       }
-      await runtime.sendGcode(
-        value
-      );
+      await runtime.sendGcode(value);
     }
   );
   electron.ipcMain.handle(
     PRINTER_IPC.startPrint,
     (event, value) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      assertRealPrintPayload(
-        value
-      );
-      runtime.startPrint(
-        value
-      );
+      assertTrustedSender(event, getWindow());
+      assertRealPrintPayload(value);
+      runtime.startPrint(value);
     }
   );
   electron.ipcMain.handle(
     PRINTER_IPC.startTestPrint,
     (event, value) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      assertParsedGcode(
-        value
-      );
-      runtime.startTestPrint(
-        value
-      );
+      assertTrustedSender(event, getWindow());
+      assertTestPrintPayload(value);
+      runtime.startTestPrint(value);
     }
   );
-  electron.ipcMain.handle(
-    PRINTER_IPC.pausePrint,
-    (event) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      runtime.pausePrint();
-    }
-  );
-  electron.ipcMain.handle(
-    PRINTER_IPC.resumePrint,
-    (event) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      runtime.resumePrint();
-    }
-  );
-  electron.ipcMain.handle(
-    PRINTER_IPC.stopPrint,
-    (event) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      runtime.stopPrint();
-    }
-  );
-  electron.ipcMain.handle(
-    PRINTER_IPC.resetPrint,
-    (event) => {
-      assertTrustedSender(
-        event,
-        getWindow()
-      );
-      runtime.resetPrint();
-    }
-  );
+  electron.ipcMain.handle(PRINTER_IPC.pausePrint, (event) => {
+    assertTrustedSender(event, getWindow());
+    runtime.pausePrint();
+  });
+  electron.ipcMain.handle(PRINTER_IPC.resumePrint, (event) => {
+    assertTrustedSender(event, getWindow());
+    runtime.resumePrint();
+  });
+  electron.ipcMain.handle(PRINTER_IPC.stopPrint, (event) => {
+    assertTrustedSender(event, getWindow());
+    runtime.stopPrint();
+  });
+  electron.ipcMain.handle(PRINTER_IPC.resetPrint, (event) => {
+    assertTrustedSender(event, getWindow());
+    runtime.resetPrint();
+  });
   return () => {
     for (const channel of channels) {
-      electron.ipcMain.removeHandler(
-        channel
-      );
+      electron.ipcMain.removeHandler(channel);
     }
   };
 }
-let mainWindow = null;
-let tray = null;
-let printerRuntime = null;
-let unregisterPrinterIpc = null;
-const sleepBlocker = new PrintSleepBlocker();
 function isSafeExternalUrl(value) {
   try {
     const url = new URL(value);
@@ -2051,25 +1943,106 @@ function isSafeExternalUrl(value) {
   }
 }
 function openExternalUrl(value) {
-  if (!isSafeExternalUrl(value)) {
-    return;
+  if (isSafeExternalUrl(value)) {
+    void electron.shell.openExternal(value);
   }
-  void electron.shell.openExternal(
-    value
-  );
 }
-function getAppIconPath() {
-  if (electron.app.isPackaged) {
-    return path.join(
-      process.resourcesPath,
-      "tray-icon.png"
+function isDevelopmentNavigationAllowed(url, developmentUrl) {
+  if (electron.app.isPackaged || !developmentUrl) {
+    return false;
+  }
+  try {
+    return new URL(url).origin === new URL(developmentUrl).origin;
+  } catch {
+    return false;
+  }
+}
+function createMainWindow$1(iconPath) {
+  const window = new electron.BrowserWindow({
+    title: "PrintInterface",
+    icon: iconPath,
+    width: 1500,
+    height: 950,
+    minWidth: 1050,
+    minHeight: 700,
+    backgroundColor: "#0b0e14",
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "../preload/index.js"),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      backgroundThrottling: false
+    }
+  });
+  window.once("ready-to-show", () => {
+    window.show();
+  });
+  window.on("minimize", () => {
+    setTimeout(() => {
+      if (!window.isDestroyed()) {
+        window.hide();
+        window.setSkipTaskbar(true);
+      }
+    }, 0);
+  });
+  window.on("show", () => {
+    window.setSkipTaskbar(false);
+  });
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    openExternalUrl(url);
+    return { action: "deny" };
+  });
+  window.webContents.on("will-navigate", (event, url) => {
+    if (url === window.webContents.getURL() || isDevelopmentNavigationAllowed(
+      url,
+      process.env["ELECTRON_RENDERER_URL"]
+    )) {
+      return;
+    }
+    event.preventDefault();
+    openExternalUrl(url);
+  });
+  const developmentUrl = process.env["ELECTRON_RENDERER_URL"];
+  if (!electron.app.isPackaged && developmentUrl) {
+    void window.loadURL(developmentUrl);
+    window.webContents.openDevTools({ mode: "detach" });
+  } else {
+    void window.loadFile(
+      path.join(__dirname, "../renderer/index.html")
     );
   }
-  return path.join(
-    process.cwd(),
-    "resources",
-    "tray-icon.png"
+  return window;
+}
+function createTray(iconPath, showMainWindow2) {
+  const tray2 = new electron.Tray(iconPath);
+  tray2.setToolTip("PrintInterface");
+  tray2.setContextMenu(
+    electron.Menu.buildFromTemplate([
+      {
+        label: "Open PrintInterface",
+        click: showMainWindow2
+      },
+      { type: "separator" },
+      {
+        label: "Quit",
+        click: () => electron.app.quit()
+      }
+    ])
   );
+  tray2.on("click", showMainWindow2);
+  tray2.on("double-click", showMainWindow2);
+  return tray2;
+}
+let mainWindow = null;
+let tray = null;
+let printerRuntime = null;
+let unregisterPrinterIpc = null;
+const sleepBlocker = new PrintSleepBlocker();
+function getAppIconPath() {
+  return electron.app.isPackaged ? path.join(process.resourcesPath, "tray-icon.png") : path.join(process.cwd(), "resources", "tray-icon.png");
 }
 function initialisePrinter() {
   if (printerRuntime) {
@@ -2077,24 +2050,27 @@ function initialisePrinter() {
   }
   printerRuntime = new PrinterRuntime({
     emit: (event) => {
-      const window = mainWindow;
-      if (!window || window.isDestroyed()) {
-        return;
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(PRINTER_IPC.event, event);
       }
-      window.webContents.send(
-        PRINTER_IPC.event,
-        event
-      );
     },
     setPrintingActive: (active) => {
-      sleepBlocker.setPrintingActive(
-        active
-      );
+      sleepBlocker.setPrintingActive(active);
     }
   });
   unregisterPrinterIpc = registerPrinterIpc({
     getWindow: () => mainWindow,
     runtime: printerRuntime
+  });
+}
+function createMainWindow() {
+  const window = createMainWindow$1(getAppIconPath());
+  mainWindow = window;
+  initialisePrinter();
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
   });
 }
 function showMainWindow() {
@@ -2109,193 +2085,31 @@ function showMainWindow() {
   mainWindow.show();
   mainWindow.focus();
 }
-function createTray() {
-  if (tray) {
-    return;
-  }
-  tray = new electron.Tray(
-    getAppIconPath()
-  );
-  tray.setToolTip(
-    "Web Pronterface"
-  );
-  tray.setContextMenu(
-    electron.Menu.buildFromTemplate([
-      {
-        label: "Open Web Pronterface",
-        click: () => {
-          showMainWindow();
-        }
-      },
-      {
-        type: "separator"
-      },
-      {
-        label: "Quit",
-        click: () => {
-          electron.app.quit();
-        }
-      }
-    ])
-  );
-  tray.on(
-    "click",
-    showMainWindow
-  );
-  tray.on(
-    "double-click",
-    showMainWindow
-  );
-}
-function createMainWindow() {
-  const window = new electron.BrowserWindow({
-    title: "PrintInterface",
-    icon: getAppIconPath(),
-    width: 1500,
-    height: 950,
-    minWidth: 1050,
-    minHeight: 700,
-    backgroundColor: "#0b0e14",
-    show: false,
-    autoHideMenuBar: true,
-    webPreferences: {
-      preload: path.join(
-        __dirname,
-        "../preload/index.js"
-      ),
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      webSecurity: true,
-      backgroundThrottling: false
-    }
-  });
-  mainWindow = window;
-  initialisePrinter();
-  window.once(
-    "ready-to-show",
-    () => {
-      window.show();
-    }
-  );
-  window.on(
-    "minimize",
-    () => {
-      setTimeout(() => {
-        if (window.isDestroyed()) {
-          return;
-        }
-        window.hide();
-        window.setSkipTaskbar(
-          true
-        );
-      }, 0);
-    }
-  );
-  window.on(
-    "show",
-    () => {
-      window.setSkipTaskbar(
-        false
-      );
-    }
-  );
-  window.webContents.setWindowOpenHandler(
-    ({ url }) => {
-      openExternalUrl(url);
-      return {
-        action: "deny"
-      };
-    }
-  );
-  window.webContents.on(
-    "will-navigate",
-    (event, url) => {
-      const currentUrl = window.webContents.getURL();
-      if (url === currentUrl) {
-        return;
-      }
-      const developmentUrl2 = process.env["ELECTRON_RENDERER_URL"];
-      if (!electron.app.isPackaged && developmentUrl2) {
-        try {
-          if (new URL(url).origin === new URL(
-            developmentUrl2
-          ).origin) {
-            return;
-          }
-        } catch {
-        }
-      }
-      event.preventDefault();
-      openExternalUrl(url);
-    }
-  );
-  const developmentUrl = process.env["ELECTRON_RENDERER_URL"];
-  if (!electron.app.isPackaged && developmentUrl) {
-    void window.loadURL(
-      developmentUrl
-    );
-    window.webContents.openDevTools({
-      mode: "detach"
-    });
-  } else {
-    void window.loadFile(
-      path.join(
-        __dirname,
-        "../renderer/index.html"
-      )
-    );
-  }
-  window.on(
-    "closed",
-    () => {
-      if (mainWindow === window) {
-        mainWindow = null;
-      }
-    }
-  );
-}
 const hasSingleInstanceLock = electron.app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   electron.app.quit();
 } else {
-  electron.app.on(
-    "second-instance",
-    showMainWindow
-  );
-  void electron.app.whenReady().then(
-    () => {
-      if (process.platform === "win32") {
-        electron.app.setAppUserModelId(
-          "dk.patrick.webpronterface"
-        );
-      }
-      createMainWindow();
-      createTray();
-      electron.app.on(
-        "activate",
-        showMainWindow
-      );
+  electron.app.on("second-instance", showMainWindow);
+  void electron.app.whenReady().then(() => {
+    if (process.platform === "win32") {
+      electron.app.setAppUserModelId("dk.patrick.PrintInterface");
     }
-  );
+    createMainWindow();
+    tray = createTray(getAppIconPath(), showMainWindow);
+    electron.app.on("activate", showMainWindow);
+  });
 }
-electron.app.on(
-  "before-quit",
-  () => {
-    unregisterPrinterIpc?.();
-    unregisterPrinterIpc = null;
-    void printerRuntime?.dispose();
-    printerRuntime = null;
-    sleepBlocker.dispose();
-    tray?.destroy();
-    tray = null;
+electron.app.on("before-quit", () => {
+  unregisterPrinterIpc?.();
+  unregisterPrinterIpc = null;
+  void printerRuntime?.dispose();
+  printerRuntime = null;
+  sleepBlocker.dispose();
+  tray?.destroy();
+  tray = null;
+});
+electron.app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    electron.app.quit();
   }
-);
-electron.app.on(
-  "window-all-closed",
-  () => {
-    if (process.platform !== "darwin") {
-      electron.app.quit();
-    }
-  }
-);
+});

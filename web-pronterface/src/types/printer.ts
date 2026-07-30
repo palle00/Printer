@@ -1,7 +1,3 @@
-import type {
-  GcodeSegment,
-} from "./gcode";
-
 export type PrinterStatus =
   | "disconnected"
   | "idle"
@@ -120,39 +116,6 @@ export const initialPrinterState:
     },
   };
 
-export type PrinterRuntimeCommand =
-  | {
-      type: "START_REAL_PRINT";
-
-      payload: {
-        fileName: string;
-        lines: string[];
-        totalLayers: number;
-      };
-    }
-  | {
-      type: "START_TEST_PRINT";
-
-      payload: {
-        fileName: string;
-        printableLines: number;
-        totalLayers: number;
-        segments: GcodeSegment[];
-      };
-    }
-  | {
-      type: "PAUSE_PRINT";
-    }
-  | {
-      type: "RESUME_PRINT";
-    }
-  | {
-      type: "STOP_PRINT";
-    }
-  | {
-      type: "RESET_PRINT";
-    };
-
 export type PrinterEvent =
   | {
       type: "CONNECTED";
@@ -235,13 +198,3 @@ export type PrinterEvent =
       type: "ERROR";
       message: string;
     };
-
-/*
- * Compatibility aliases for the existing
- * modular print-engine files.
- */
-export type PrinterWorkerCommand =
-  PrinterRuntimeCommand;
-
-export type PrinterWorkerEvent =
-  PrinterEvent;

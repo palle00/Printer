@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
 } from "react";
 
@@ -53,7 +54,7 @@ export function usePrinterDashboard() {
   ]);
 
   const toggleConnection =
-    async () => {
+    useCallback(async () => {
       if (printer.connected) {
         printer.disconnect();
         return;
@@ -62,9 +63,14 @@ export function usePrinterDashboard() {
       printer.resetPrint();
 
       await printer.connect();
-    };
+    }, [
+      printer.connected,
+      printer.connect,
+      printer.disconnect,
+      printer.resetPrint,
+    ]);
 
-  const startPrint = () => {
+  const startPrint = useCallback(() => {
     if (
       !gcode ||
       !canStartPrint
@@ -73,9 +79,13 @@ export function usePrinterDashboard() {
     }
 
     printer.startPrint(gcode);
-  };
+  }, [
+    canStartPrint,
+    gcode,
+    printer.startPrint,
+  ]);
 
-  const startTestPrint = () => {
+  const startTestPrint = useCallback(() => {
     if (
       !gcode ||
       !canStartTestPrint
@@ -86,7 +96,11 @@ export function usePrinterDashboard() {
     printer.startTestPrint(
       gcode,
     );
-  };
+  }, [
+    canStartTestPrint,
+    gcode,
+    printer.startTestPrint,
+  ]);
 
   return {
     printer,
@@ -141,8 +155,3 @@ export function usePrinterDashboard() {
       printer.resetPrint,
   };
 }
-
-export type PrinterDashboard =
-  ReturnType<
-    typeof usePrinterDashboard
-  >;

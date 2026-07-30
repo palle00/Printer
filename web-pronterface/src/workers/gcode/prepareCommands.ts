@@ -1,13 +1,7 @@
-export interface PreparedCommand {
-  text: string;
-  layer: number;
+export interface PreparedCommands {
+  texts: string[];
+  layers: Uint32Array<ArrayBufferLike>;
 }
-
-type LayerMarkerMode =
-  | "numbered"
-  | "change"
-  | "z"
-  | "none";
 
 export function stripGcodeLine(
   rawLine: string,
@@ -24,42 +18,6 @@ export function stripGcodeLine(
       "",
     )
     .trim();
-}
-
-function detectLayerMarkerMode(
-  lines: string[],
-): LayerMarkerMode {
-  if (
-    lines.some((line) =>
-      /^\s*;\s*LAYER:\s*\d+/i.test(
-        line,
-      ),
-    )
-  ) {
-    return "numbered";
-  }
-
-  if (
-    lines.some((line) =>
-      /^\s*;\s*LAYER_CHANGE\b/i.test(
-        line,
-      ),
-    )
-  ) {
-    return "change";
-  }
-
-  if (
-    lines.some((line) =>
-      /^\s*;\s*Z:\s*[-+]?\d/i.test(
-        line,
-      ),
-    )
-  ) {
-    return "z";
-  }
-
-  return "none";
 }
 
 function clampLayer(
@@ -79,12 +37,14 @@ function clampLayer(
 export function prepareCommands(
   lines: string[],
   totalLayers: number,
-): PreparedCommand[] {
+): PreparedCommands {
   const markerMode =
     detectLayerMarkerMode(lines);
 
-  const commands:
-    PreparedCommand[] = [];
+  const texts: string[] = [];
+  const layers =
+    new Uint32Array(lines.length);
+  let commandIndex = 0;
 
   let currentLayer = 1;
   let sequentialLayer = 0;
@@ -93,19 +53,16 @@ export function prepareCommands(
     if (
       markerMode === "numbered"
     ) {
-      const match = rawLine.match(
-        /^\s*;\s*LAYER:\s*(\d+)/i,
-      );
+      const numberedLayer =
+        getNumberedLayer(rawLine);
 
-      if (match) {
+      if (numberedLayer !== null) {
         currentLayer =
-          Number(match[1]) + 1;
+          numberedLayer;
       }
     } else if (
-      markerMode === "change" &&
-      /^\s*;\s*LAYER_CHANGE\b/i.test(
-        rawLine,
-      )
+      markerMode === "layer-change" &&
+      isLayerChangeMarker(rawLine)
     ) {
       sequentialLayer++;
 
@@ -115,10 +72,8 @@ export function prepareCommands(
           sequentialLayer,
         );
     } else if (
-      markerMode === "z" &&
-      /^\s*;\s*Z:\s*[-+]?\d/i.test(
-        rawLine,
-      )
+      markerMode === "z-comment" &&
+      isZCommentMarker(rawLine)
     ) {
       sequentialLayer++;
 
@@ -139,15 +94,22 @@ export function prepareCommands(
       continue;
     }
 
-    commands.push({
-      text: command,
-
-      layer: clampLayer(
-        currentLayer,
-        totalLayers,
-      ),
-    });
+    texts.push(command);
+    layers[commandIndex] = clampLayer(
+      currentLayer,
+      totalLayers,
+    );
+    commandIndex++;
   }
 
-  return commands;
+  return {
+    texts,
+    layers: layers.subarray(0, commandIndex),
+  };
 }
+import {
+  detectLayerMarkerMode,
+  getNumberedLayer,
+  isLayerChangeMarker,
+  isZCommentMarker,
+} from "../../gcode/layerMarkers";
