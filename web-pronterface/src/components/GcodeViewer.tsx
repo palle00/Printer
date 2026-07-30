@@ -8,6 +8,9 @@ import type { PrinterPosition } from "../types/printer";
 import type {
   GcodeFeatureCategory,
 } from "../gcode/features";
+import {
+  getErrorMessage,
+} from "../utils/errors";
 import { GcodeScene } from "./gcode-viewer/GcodeScene";
 
 interface GcodeViewerProps {
@@ -62,11 +65,24 @@ export default function GcodeViewer({
       return;
     }
 
-    const scene =
-      new GcodeScene(
-        mount,
-        initialVisibility.current,
+    let scene: GcodeScene;
+
+    try {
+      scene =
+        new GcodeScene(
+          mount,
+          initialVisibility.current,
+        );
+    } catch (sceneError) {
+      mount.replaceChildren();
+      setBuildProgress(null);
+      setBuildError(
+        `Unable to initialize the 3D preview: ${getErrorMessage(
+          sceneError,
+        )}`,
       );
+      return;
+    }
 
     sceneRef.current = scene;
 

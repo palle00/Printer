@@ -23,13 +23,26 @@ export function appendTerminalLine(
   state: PrinterState,
   text: string,
 ): PrinterState {
+  return appendTerminalLines(
+    state,
+    [text],
+  );
+}
+
+export function appendTerminalLines(
+  state: PrinterState,
+  lines: readonly string[],
+): PrinterState {
+  if (lines.length === 0) {
+    return state;
+  }
+
   return {
     ...state,
-    terminal: appendBounded(
-      state.terminal,
-      text,
-      MAX_TERMINAL_LINES,
-    ),
+    terminal: [
+      ...state.terminal,
+      ...lines,
+    ].slice(-MAX_TERMINAL_LINES),
   };
 }
 

@@ -20,6 +20,7 @@ export function parseGcodeInWorker(
   text: string,
   filePath: string,
   fileSize: number,
+  fileSha256: string,
 ): GcodeParseJob {
   const worker = new Worker(
     new URL(
@@ -93,6 +94,7 @@ export function parseGcodeInWorker(
     text,
     filePath,
     fileSize,
+    fileSha256,
   });
 
   return {

@@ -11,7 +11,9 @@ export function assertTrustedSender(
     !window ||
     window.isDestroyed() ||
     event.sender !==
-      window.webContents
+      window.webContents ||
+    event.senderFrame !==
+      window.webContents.mainFrame
   ) {
     throw new Error(
       "Unauthorized desktop request.",

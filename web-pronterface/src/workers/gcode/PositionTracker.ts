@@ -41,6 +41,7 @@ function commandContainsAxis(
 export class PositionTracker {
   private absolutePositioning = true;
   private absoluteExtrusion = true;
+  private unitScale = 1;
 
   private position:
     PrinterPosition = {
@@ -76,6 +77,7 @@ export class PositionTracker {
   reset(): void {
     this.absolutePositioning = true;
     this.absoluteExtrusion = true;
+    this.unitScale = 1;
 
     this.set({
       x: 0,
@@ -102,6 +104,16 @@ export class PositionTracker {
 
     if (code === "G90") {
       this.absolutePositioning = true;
+      return;
+    }
+
+    if (code === "G20") {
+      this.unitScale = 25.4;
+      return;
+    }
+
+    if (code === "G21") {
+      this.unitScale = 1;
       return;
     }
 
@@ -222,19 +234,23 @@ export class PositionTracker {
     );
 
     if (x !== null) {
-      this.position.x = x;
+      this.position.x =
+        x * this.unitScale;
     }
 
     if (y !== null) {
-      this.position.y = y;
+      this.position.y =
+        y * this.unitScale;
     }
 
     if (z !== null) {
-      this.position.z = z;
+      this.position.z =
+        z * this.unitScale;
     }
 
     if (e !== null) {
-      this.position.e = e;
+      this.position.e =
+        e * this.unitScale;
     }
 
     this.events.position(
@@ -266,31 +282,43 @@ export class PositionTracker {
     );
 
     if (x !== null) {
+      const scaledX =
+        x * this.unitScale;
       this.position.x =
         this.absolutePositioning
-          ? x
-          : this.position.x + x;
+          ? scaledX
+          : this.position.x +
+            scaledX;
     }
 
     if (y !== null) {
+      const scaledY =
+        y * this.unitScale;
       this.position.y =
         this.absolutePositioning
-          ? y
-          : this.position.y + y;
+          ? scaledY
+          : this.position.y +
+            scaledY;
     }
 
     if (z !== null) {
+      const scaledZ =
+        z * this.unitScale;
       this.position.z =
         this.absolutePositioning
-          ? z
-          : this.position.z + z;
+          ? scaledZ
+          : this.position.z +
+            scaledZ;
     }
 
     if (e !== null) {
+      const scaledE =
+        e * this.unitScale;
       this.position.e =
         this.absoluteExtrusion
-          ? e
-          : this.position.e + e;
+          ? scaledE
+          : this.position.e +
+            scaledE;
     }
 
     this.events.position(

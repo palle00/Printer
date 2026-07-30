@@ -39,6 +39,9 @@ export class NativeSerialTransport
       () => undefined;
 
   private closing = false;
+  private lifecycle:
+    Promise<void> =
+      Promise.resolve();
 
   get connected(): boolean {
     return (
@@ -96,7 +99,22 @@ export class NativeSerialTransport
       handler;
   }
 
-  async connect(
+  connect(
+    options: SerialOpenOptions,
+  ): Promise<void> {
+    return this.runLifecycleOperation(
+      () =>
+        this.openPort(options),
+    );
+  }
+
+  disconnect(): Promise<void> {
+    return this.runLifecycleOperation(
+      () => this.closePort(),
+    );
+  }
+
+  private async openPort(
     options: SerialOpenOptions,
   ): Promise<void> {
     if (this.connected) {
@@ -106,7 +124,7 @@ export class NativeSerialTransport
     }
 
     if (this.port) {
-      await this.disconnect();
+      await this.closePort();
     }
 
     this.closing = false;
@@ -196,7 +214,7 @@ export class NativeSerialTransport
     }
   }
 
-  async disconnect():
+  private async closePort():
     Promise<void> {
     const port = this.port;
     const parser = this.parser;
@@ -230,6 +248,24 @@ export class NativeSerialTransport
 
       this.closing = false;
     }
+  }
+
+  private runLifecycleOperation(
+    operation: () =>
+      Promise<void>,
+  ): Promise<void> {
+    const result =
+      this.lifecycle.then(
+        operation,
+        operation,
+      );
+
+    this.lifecycle =
+      result.catch(
+        () => undefined,
+      );
+
+    return result;
   }
 
   async write(

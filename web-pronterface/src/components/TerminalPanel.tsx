@@ -69,13 +69,9 @@ function TerminalPanel({
             // no messages
           </span>
         ) : (
-          lines.map((line, index) => (
-            <div
-              key={`${index}-${line}`}
-            >
-              {line}
-            </div>
-          ))
+          <div className="whitespace-pre-wrap break-words">
+            {lines.join("\n")}
+          </div>
         )}
       </div>
 

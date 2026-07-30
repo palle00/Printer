@@ -56,6 +56,8 @@ export class SerialQueue {
 
   queue(
     command: string,
+    timeoutMs =
+      COMMAND_TIMEOUT_MS,
   ): Promise<void> {
     const normalized =
       command.trim();
@@ -80,6 +82,7 @@ export class SerialQueue {
 
         await this.writeAndWaitForOk(
           normalized,
+          timeoutMs,
         );
 
         this.onAcknowledgedCommand(
@@ -161,6 +164,7 @@ export class SerialQueue {
 
   private async writeAndWaitForOk(
     command: string,
+    timeoutMs: number,
   ): Promise<void> {
     if (
       !this.connection.connected
@@ -203,7 +207,7 @@ export class SerialQueue {
                 ),
               );
             },
-            COMMAND_TIMEOUT_MS,
+            timeoutMs,
           ),
         };
 

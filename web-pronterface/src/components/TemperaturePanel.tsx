@@ -8,6 +8,36 @@ import type { TemperatureSample } from "../types/printer";
 import TemperatureGraph from "./TemperatureGraph";
 import { Panel } from "./common/Panel";
 
+const MAX_HOTEND_TEMPERATURE = 300;
+const MAX_BED_TEMPERATURE = 120;
+const HOTEND_PRESETS = [
+  180,
+  200,
+  210,
+  220,
+  240,
+  0,
+] as const;
+const BED_PRESETS = [
+  50,
+  60,
+  70,
+  80,
+  100,
+  0,
+] as const;
+
+function isValidTemperature(
+  temperature: number,
+  maximum: number,
+): boolean {
+  return (
+    Number.isFinite(temperature) &&
+    temperature >= 0 &&
+    temperature <= maximum
+  );
+}
+
 interface TemperaturePanelProps {
   hotend: number;
   targetHotend: number;
@@ -59,6 +89,15 @@ function TemperaturePanel({
   const setHotendTemperature = (
     temperature: number,
   ) => {
+    if (
+      !isValidTemperature(
+        temperature,
+        MAX_HOTEND_TEMPERATURE,
+      )
+    ) {
+      return;
+    }
+
     setHotendInput(temperature);
 
     sendGcode(
@@ -69,6 +108,15 @@ function TemperaturePanel({
   const setBedTemperature = (
     temperature: number,
   ) => {
+    if (
+      !isValidTemperature(
+        temperature,
+        MAX_BED_TEMPERATURE,
+      )
+    ) {
+      return;
+    }
+
     setBedInput(temperature);
 
     sendGcode(
@@ -85,14 +133,10 @@ function TemperaturePanel({
         inputValue={hotendInput}
         setInputValue={setHotendInput}
         enabled={controlsEnabled}
-        presets={[
-          180,
-          200,
-          210,
-          220,
-          240,
-          0,
-        ]}
+        maximum={
+          MAX_HOTEND_TEMPERATURE
+        }
+        presets={HOTEND_PRESETS}
         onSet={setHotendTemperature}
         accentClass="text-red-400"
       />
@@ -106,14 +150,10 @@ function TemperaturePanel({
         inputValue={bedInput}
         setInputValue={setBedInput}
         enabled={controlsEnabled}
-        presets={[
-          50,
-          60,
-          70,
-          80,
-          100,
-          0,
-        ]}
+        maximum={
+          MAX_BED_TEMPERATURE
+        }
+        presets={BED_PRESETS}
         onSet={setBedTemperature}
         accentClass="text-blue-400"
       />
@@ -134,6 +174,7 @@ function TemperatureControl({
   inputValue,
   setInputValue,
   enabled,
+  maximum,
   presets,
   onSet,
   accentClass,
@@ -146,12 +187,19 @@ function TemperatureControl({
     value: number,
   ) => void;
   enabled: boolean;
-  presets: number[];
+  maximum: number;
+  presets: readonly number[];
   onSet: (
     temperature: number,
   ) => void;
   accentClass: string;
 }) {
+  const inputIsValid =
+    isValidTemperature(
+      inputValue,
+      maximum,
+    );
+
   return (
     <div className="bg-[#181d2c] p-3 rounded border border-gray-800">
       <div className="flex justify-between items-center mb-2">
@@ -173,6 +221,9 @@ function TemperatureControl({
       <div className="flex gap-2 mb-2">
         <input
           type="number"
+          min={0}
+          max={maximum}
+          step={1}
           value={inputValue}
           onChange={(event) =>
             setInputValue(
@@ -182,6 +233,9 @@ function TemperatureControl({
             )
           }
           disabled={!enabled}
+          aria-invalid={
+            !inputIsValid
+          }
           className="w-20 bg-black border border-gray-700 rounded px-2 py-1.5 text-xs font-mono text-white disabled:text-gray-700"
         />
 
@@ -190,7 +244,10 @@ function TemperatureControl({
           onClick={() =>
             onSet(inputValue)
           }
-          disabled={!enabled}
+          disabled={
+            !enabled ||
+            !inputIsValid
+          }
           className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800 disabled:text-gray-600 rounded text-xs font-bold"
         >
           Set

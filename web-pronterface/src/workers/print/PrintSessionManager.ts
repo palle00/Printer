@@ -1,14 +1,4 @@
-import {
-  createPrintProgress,
-  estimateTestDurationSeconds,
-} from "../../print/printMath";
-import {
-  createLiveCalibrationState,
-  updateLiveEta,
-} from "../../print/liveEta";
-
 import type {
-  RealPrintPayload,
   TestPrintPayload,
 } from "../../types/printer-ipc";
 
@@ -21,10 +11,6 @@ import type {
   PrinterEvents,
   IdlePrinterStatus,
 } from "../core/PrinterEvents";
-
-import {
-  prepareCommands,
-} from "../gcode/prepareCommands";
 
 import type {
   PositionTracker,
@@ -42,16 +28,28 @@ import type {
 import {
   RealPrintRunner,
 } from "./RealPrintRunner";
+import type {
+  RealPrintJob,
+} from "./realPrintJob";
+import {
+  releaseSessionResources,
+} from "./sessionResources";
+import {
+  createRealSession,
+  createTestSession,
+  isRealPrintJobConsistent,
+} from "./sessionFactory";
+import {
+  clearRealProgressTimer,
+  emitSessionProgress,
+  finalizeFinishedSession,
+} from "./sessionLifecycle";
 
 import type {
   PrintSession,
-  RealSession,
-  TestSession,
 } from "./sessionTypes";
 
 import {
-  createBaseSession,
-  getElapsedMilliseconds,
   isActiveStatus,
   pauseSessionClock,
 } from "./sessionUtils";
@@ -170,7 +168,7 @@ export class PrintSessionManager {
   }
 
   startReal(
-    payload: RealPrintPayload,
+    payload: RealPrintJob,
   ): void {
     if (
       !this.options.isConnected()
@@ -180,56 +178,35 @@ export class PrintSessionManager {
           "Connect the printer before starting a real print.",
         ),
       );
+      void payload.commandSource
+        .close();
 
       return;
     }
 
     if (this.isActive) {
+      void payload.commandSource
+        .close();
       return;
     }
 
     this.clearPendingTestStop();
 
-    const commands =
-      prepareCommands(
-        payload.lines,
-        payload.totalLayers,
-      );
-
-    if (
-      payload.timing
-        .cumulativeSeconds.length !==
-      commands.texts.length + 1
-    ) {
+    if (!isRealPrintJobConsistent(
+      payload,
+    )) {
       this.options.events.error(
         new Error(
           "The print timing model does not match the G-code commands.",
         ),
       );
+      void payload.commandSource
+        .close();
       return;
     }
 
-    const session:
-      RealSession = {
-      ...createBaseSession(
-        "real",
-        payload.fileName,
-        commands.texts.length,
-        payload.totalLayers,
-      ),
-
-      mode: "real",
-      commands,
-      timing: payload.timing,
-      calibration:
-        createLiveCalibrationState(),
-      heatingCompletedAtActiveSeconds:
-        null,
-      lastProgressEmitAtMs: 0,
-      lastCalibratedTotalSeconds:
-        payload.timing.totalSeconds,
-      progressTimer: null,
-    };
+    const session =
+      createRealSession(payload);
 
     this.session = session;
 
@@ -238,7 +215,7 @@ export class PrintSessionManager {
 
       payload.fileName,
 
-      commands.texts.length,
+      payload.commandLayers.length,
 
       payload.totalLayers,
     );
@@ -273,33 +250,11 @@ export class PrintSessionManager {
 
     this.clearPendingTestStop();
 
-    const durationSeconds =
-      estimateTestDurationSeconds(
-        payload.path.commandIndexes.length,
-      );
-
-    const session:
-      TestSession = {
-      ...createBaseSession(
-        "test",
-
-        payload.fileName,
-
-        payload.printableLines,
-
-        payload.totalLayers,
-      ),
-
-      mode: "test",
-
-      path:
-        payload.path,
-
-      durationMs:
-        durationSeconds * 1000,
-
-      timer: null,
-    };
+    const {
+      session,
+      durationSeconds,
+      initialPosition,
+    } = createTestSession(payload);
 
     this.session = session;
 
@@ -323,16 +278,10 @@ export class PrintSessionManager {
       },
     );
 
-    const hasFirstSegment =
-      payload.path.commandIndexes.length > 0;
-
-    if (hasFirstSegment) {
-      this.emitPosition({
-        x: payload.path.coordinates[0],
-        y: payload.path.coordinates[1],
-        z: payload.path.coordinates[2],
-        e: 0,
-      });
+    if (initialPosition) {
+      this.emitPosition(
+        initialPosition,
+      );
     } else {
       this.options.positionTracker.reset();
     }
@@ -462,6 +411,11 @@ export class PrintSessionManager {
      * Releases a real print that is
      * currently waiting in paused state.
      */
+    this.options.serialQueue.reset(
+      new Error(
+        "The active print was stopped.",
+      ),
+    );
     session.resumeResolver?.();
   }
 
@@ -481,6 +435,11 @@ export class PrintSessionManager {
       );
     }
 
+    if (this.session) {
+      releaseSessionResources(
+        this.session,
+      );
+    }
     this.session = null;
 
     this.options.positionTracker.reset();
@@ -505,13 +464,17 @@ export class PrintSessionManager {
         session,
       );
     } else {
-      this.clearRealProgressTimer(
+      clearRealProgressTimer(
         session,
       );
       session.stopRequested = true;
 
       session.resumeResolver?.();
     }
+
+    releaseSessionResources(
+      session,
+    );
 
     /*
      * Mark the session as no longer current.
@@ -538,208 +501,10 @@ export class PrintSessionManager {
       return;
     }
 
-    const now = performance.now();
-
-    if (
-      session.mode === "real" &&
-      !progressOptions?.force &&
-      now -
-        session.lastProgressEmitAtMs <
-        1_000
-    ) {
-      return;
-    }
-
-    if (session.mode === "real") {
-      session.lastProgressEmitAtMs =
-        now;
-    }
-
-    const elapsedSeconds =
-      getElapsedMilliseconds(
-        session,
-      ) / 1000;
-
-    let realTiming:
-      {
-        percentOverride: number;
-        etaSecondsOverride: number;
-        estimatedTotalSeconds: number;
-        estimateSource:
-          "slicer" | "motion" | "live";
-        estimateConfidence:
-          "low" | "medium" | "high";
-        isHeating: boolean;
-      }
-      | undefined;
-
-    if (session.mode === "real") {
-      const timing = session.timing;
-      const predictedElapsed =
-        timing.cumulativeSeconds[
-          Math.min(
-            session.currentLine,
-            timing
-              .cumulativeSeconds
-              .length - 1,
-          )
-        ];
-      const totalSeconds =
-        Math.max(
-          0,
-          timing.totalSeconds,
-        );
-      const heatingSeconds =
-        Math.min(
-          totalSeconds,
-          Math.max(
-            0,
-            timing.heatingSeconds,
-          ),
-        );
-      const isHeating =
-        heatingSeconds > 0 &&
-        predictedElapsed <
-          heatingSeconds;
-
-      if (
-        !isHeating &&
-        session
-          .heatingCompletedAtActiveSeconds ===
-          null
-      ) {
-        session
-          .heatingCompletedAtActiveSeconds =
-          elapsedSeconds;
-      }
-
-      if (isHeating) {
-        realTiming = {
-          percentOverride:
-            totalSeconds > 0
-              ? (
-                  predictedElapsed /
-                  totalSeconds
-                ) *
-                100
-              : 0,
-          etaSecondsOverride:
-            Math.max(
-              0,
-              (
-                totalSeconds -
-                heatingSeconds
-              ) +
-                Math.max(
-                  0,
-                  heatingSeconds -
-                    elapsedSeconds,
-                ),
-            ),
-          estimatedTotalSeconds:
-            totalSeconds,
-          estimateSource:
-            timing.source,
-          estimateConfidence:
-            "low",
-          isHeating: true,
-        };
-      } else {
-        const actualHeatingSeconds =
-          session
-            .heatingCompletedAtActiveSeconds ??
-          0;
-        const live = updateLiveEta({
-          state:
-            session.calibration,
-          actualPrintSeconds:
-            Math.max(
-              0,
-              elapsedSeconds -
-                actualHeatingSeconds,
-            ),
-          predictedPrintElapsedSeconds:
-            Math.max(
-              0,
-              predictedElapsed -
-                heatingSeconds,
-            ),
-          predictedPrintTotalSeconds:
-            Math.max(
-              0,
-              totalSeconds -
-                heatingSeconds,
-            ),
-          baseSource:
-            timing.source,
-          baseConfidence:
-            session.currentLine ===
-            0
-              ? "low"
-              : timing.confidence,
-        });
-
-        session.calibration =
-          live.state;
-        session
-          .lastCalibratedTotalSeconds =
-          actualHeatingSeconds +
-          live
-            .calibratedTotalPrintSeconds;
-        realTiming = {
-          percentOverride:
-            totalSeconds > 0
-              ? (
-                  predictedElapsed /
-                  totalSeconds
-                ) *
-                100
-              : 100,
-          etaSecondsOverride:
-            live.remainingSeconds,
-          estimatedTotalSeconds:
-            session
-              .lastCalibratedTotalSeconds,
-          estimateSource:
-            live.source,
-          estimateConfidence:
-            live.confidence,
-          isHeating: false,
-        };
-      }
-    }
-
-    const progress =
-      createPrintProgress({
-        fileName:
-          session.fileName,
-
-        currentLine:
-          session.currentLine,
-
-        totalLines:
-          session.totalLines,
-
-        currentLayer:
-          session.currentLayer,
-
-        totalLayers:
-          session.totalLayers,
-
-        elapsedSeconds,
-
-        percentOverride:
-          progressOptions
-            ?.percentOverride,
-
-        estimatedDurationSeconds:
-          progressOptions
-            ?.estimatedDurationSeconds,
-        ...realTiming,
-      });
-
-    this.options.events.progress(
-      progress,
+    emitSessionProgress(
+      this.options.events,
+      session,
+      progressOptions,
     );
   }
 
@@ -750,87 +515,9 @@ export class PrintSessionManager {
       return;
     }
 
-    pauseSessionClock(session);
-
-    if (session.mode === "real") {
-      this.clearRealProgressTimer(
-        session,
-      );
-    }
-
-    session.currentLine =
-      session.totalLines;
-
-    session.currentLayer =
-      session.totalLayers;
-
-    session.status = "idle";
-
-    this.emitProgress(
+    finalizeFinishedSession(
+      this.options.events,
       session,
-
-      session.mode === "test"
-        ? {
-            percentOverride: 100,
-
-            estimatedDurationSeconds:
-              session.durationMs /
-              1000,
-          }
-        : {
-            percentOverride: 100,
-            force: true,
-          },
-    );
-
-    const actualSeconds =
-      session.elapsedBeforeRunMs /
-      1000;
-    const originalEstimate =
-      session.mode === "real"
-        ? session.timing.totalSeconds
-        : session.durationMs / 1000;
-    const finalEstimate =
-      session.mode === "real"
-        ? session
-            .lastCalibratedTotalSeconds
-        : originalEstimate;
-    const absoluteError =
-      Math.abs(
-        originalEstimate -
-          actualSeconds,
-      );
-
-    this.options.events.printFinished(
-      session.mode,
-
-      actualSeconds,
-      {
-        originalEstimateSeconds:
-          originalEstimate,
-        finalCalibratedEstimateSeconds:
-          finalEstimate,
-        actualActiveSeconds:
-          actualSeconds,
-        absoluteErrorSeconds:
-          absoluteError,
-        percentageError:
-          actualSeconds > 0
-            ? (
-                absoluteError /
-                actualSeconds
-              ) *
-              100
-            : null,
-        estimateSource:
-          session.mode === "real"
-            ? session.calibration
-                .sampleCount > 0
-              ? "live"
-              : session.timing
-                  .source
-            : null,
-      },
     );
   }
 
@@ -843,7 +530,7 @@ export class PrintSessionManager {
     }
 
     if (session.mode === "real") {
-      this.clearRealProgressTimer(
+      clearRealProgressTimer(
         session,
       );
     }
@@ -867,6 +554,9 @@ export class PrintSessionManager {
       this.getIdleStatus(),
 
       clearSession,
+    );
+    releaseSessionResources(
+      session,
     );
   }
 
@@ -907,19 +597,4 @@ export class PrintSessionManager {
     this.testStopTimer = null;
   }
 
-  private clearRealProgressTimer(
-    session: RealSession,
-  ): void {
-    if (
-      session.progressTimer ===
-      null
-    ) {
-      return;
-    }
-
-    clearInterval(
-      session.progressTimer,
-    );
-    session.progressTimer = null;
-  }
 }

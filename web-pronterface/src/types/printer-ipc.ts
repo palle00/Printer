@@ -4,6 +4,9 @@ import type {
 import type {
     EstimateConfidence,
 } from "./gcode";
+import type {
+    GcodeFileFingerprint,
+} from "./gcode-file";
 
 export interface RealPrintTimingPayload {
     cumulativeSeconds:
@@ -15,8 +18,9 @@ export interface RealPrintTimingPayload {
 }
 
 export interface RealPrintPayload {
-    fileName: string;
-    lines: string[];
+    source: GcodeFileFingerprint;
+    commandLayers:
+        Uint32Array<ArrayBufferLike>;
     totalLayers: number;
     timing: RealPrintTimingPayload;
 }

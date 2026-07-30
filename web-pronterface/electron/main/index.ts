@@ -1,5 +1,6 @@
 import {
   app,
+  dialog,
   nativeImage,
   type BrowserWindow,
   type NativeImage,
@@ -125,6 +126,17 @@ function createMainWindow(): void {
       mainWindow = null;
     }
   });
+
+  window.on("close", (event) => {
+    if (
+      printerRuntime
+        ?.isPrintActive
+    ) {
+      event.preventDefault();
+      window.hide();
+      window.setSkipTaskbar(true);
+    }
+  });
 }
 
 function showMainWindow(): void {
@@ -191,7 +203,26 @@ if (!hasSingleInstanceLock) {
   });
 }
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (
+    printerRuntime?.isPrintActive
+  ) {
+    event.preventDefault();
+    showMainWindow();
+    void dialog.showMessageBox({
+      type: "warning",
+      title: "Print in progress",
+      message:
+        "Stop the active print before exiting PrintInterface.",
+      detail:
+        "PrintInterface must remain open until the printer shutdown sequence has completed.",
+      buttons: [
+        "OK",
+      ],
+    });
+    return;
+  }
+
   applicationUpdater?.dispose();
   applicationUpdater = null;
   unregisterDesktopIpc?.();

@@ -7,7 +7,6 @@ import {
 
 import { createTestPrintPayload } from "../print/createTestPrintPayload";
 import {
-  appendTerminalLine,
   reducePrinterEvent,
 } from "../state/printerState";
 import type { ParsedGcode } from "../types/gcode";
@@ -15,21 +14,27 @@ import {
   initialPrinterState,
   type PrinterState,
 } from "../types/printer";
+import {
+  getErrorMessage,
+} from "../utils/errors";
+import {
+  useTerminalBatch,
+} from "./useTerminalBatch";
 
 export function usePrinter() {
   const testPrintBuildActive = useRef(false);
   const [state, setState] = useState<PrinterState>(
     initialPrinterState,
   );
-
-  const appendTerminal = useCallback((text: string) => {
-    setState((previous) => appendTerminalLine(previous, text));
-  }, []);
+  const terminal =
+    useTerminalBatch(setState);
+  const appendTerminal =
+    terminal.append;
 
   const reportError = useCallback(
     (error: unknown) => {
       const message =
-        error instanceof Error ? error.message : String(error);
+        getErrorMessage(error);
 
       setState((previous) => ({
         ...previous,
@@ -40,13 +45,33 @@ export function usePrinter() {
     [appendTerminal],
   );
 
-  useEffect(
-    () =>
-      window.desktop.printer.onEvent((event) => {
-        setState((previous) => reducePrinterEvent(previous, event));
-      }),
-    [],
-  );
+  useEffect(() => {
+    const unsubscribe =
+      window.desktop.printer.onEvent(
+        (event) => {
+          if (
+            event.type ===
+              "TERMINAL_IN" ||
+            event.type ===
+              "TERMINAL_OUT"
+          ) {
+            appendTerminal(event.text);
+            return;
+          }
+
+          setState((previous) =>
+            reducePrinterEvent(
+              previous,
+              event,
+            ),
+          );
+        },
+      );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [appendTerminal]);
 
   const connect = useCallback(async (path: string) => {
     try {
@@ -81,10 +106,29 @@ export function usePrinter() {
 
   const startPrint = useCallback(
     (gcode: ParsedGcode) => {
+      if (
+        !gcode.filePath ||
+        gcode.fileSize === null ||
+        !gcode.fileSha256
+      ) {
+        reportError(
+          new Error(
+            "Reload the G-code file before starting the print.",
+          ),
+        );
+        return;
+      }
+
       void window.desktop.printer
         .startPrint({
-          fileName: gcode.fileName,
-          lines: gcode.lines,
+          source: {
+            path: gcode.filePath,
+            size: gcode.fileSize,
+            sha256:
+              gcode.fileSha256,
+          },
+          commandLayers:
+            gcode.commandLayers,
           totalLayers: gcode.totalLayers,
           timing: gcode.timing,
         })
@@ -129,12 +173,8 @@ export function usePrinter() {
     void window.desktop.printer.resetPrint().catch(reportError);
   }, [reportError]);
 
-  const clearTerminal = useCallback(() => {
-    setState((previous) => ({
-      ...previous,
-      terminal: [],
-    }));
-  }, []);
+  const clearTerminal =
+    terminal.clear;
 
   const clearError = useCallback(() => {
     setState((previous) => ({

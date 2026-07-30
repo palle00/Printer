@@ -5,6 +5,9 @@ import {
 import {
   promises as fs,
 } from "node:fs";
+import {
+  createHash,
+} from "node:crypto";
 import path from "node:path";
 import type {
   GcodeFileData,
@@ -12,42 +15,10 @@ import type {
 import type {
   RecentFileEntry,
 } from "../../../src/types/settings";
-
-const SUPPORTED_EXTENSIONS =
-  new Set([
-    ".gcode",
-    ".gco",
-    ".gc",
-    ".g",
-  ]);
-const MAXIMUM_FILE_SIZE =
-  2 * 1024 * 1024 * 1024;
-
-export function isSupportedGcodePath(
-  filePath: string,
-): boolean {
-  return SUPPORTED_EXTENSIONS.has(
-    path
-      .extname(filePath)
-      .toLowerCase(),
-  );
-}
-
-function assertGcodePath(
-  value: unknown,
-): string {
-  if (
-    typeof value !== "string" ||
-    !path.isAbsolute(value) ||
-    !isSupportedGcodePath(value)
-  ) {
-    throw new Error(
-      "Choose a G-code, GCO, GC, or G file.",
-    );
-  }
-
-  return path.normalize(value);
-}
+import {
+  assertGcodeFileSize,
+  assertGcodePath,
+} from "./gcodeFileValidation";
 
 export async function readGcodeFile(
   requestedPath: unknown,
@@ -56,15 +27,24 @@ export async function readGcodeFile(
     await inspectGcodeFile(
       requestedPath,
     );
+  const bytes = await fs.readFile(
+    details.path,
+  );
+
+  if (bytes.byteLength !== details.size) {
+    throw new Error(
+      "The G-code file changed while it was being opened. Open it again.",
+    );
+  }
 
   return {
     path: details.path,
     name: details.name,
-    size: details.size,
-    text: await fs.readFile(
-      details.path,
-      "utf8",
-    ),
+    size: bytes.byteLength,
+    sha256: createHash("sha256")
+      .update(bytes)
+      .digest("hex"),
+    text: bytes.toString("utf8"),
   };
 }
 
@@ -91,17 +71,9 @@ export async function inspectGcodeFile(
     );
   }
 
-  if (
-    details.size <= 0 ||
-    details.size >
-      MAXIMUM_FILE_SIZE
-  ) {
-    throw new Error(
-      details.size <= 0
-        ? "The selected G-code file is empty."
-        : "The selected G-code file is too large.",
-    );
-  }
+  assertGcodeFileSize(
+    details.size,
+  );
 
   return {
     path: filePath,

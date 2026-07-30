@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
 } from "react";
 
@@ -9,6 +10,9 @@ import type {
 import {
   DEFAULT_NOTIFICATION_PREFERENCES,
 } from "../types/settings";
+import {
+  getErrorMessage,
+} from "../utils/errors";
 
 interface NotificationSettingsProps {
   open: boolean;
@@ -63,8 +67,18 @@ export default function NotificationSettings({
   ] = useState(
     DEFAULT_NOTIFICATION_PREFERENCES,
   );
+  const preferencesRef =
+    useRef(preferences);
+  const saveQueue =
+    useRef<Promise<void>>(
+      Promise.resolve(),
+    );
+  const mutationVersion =
+    useRef(0);
   const [error, setError] =
     useState<string | null>(null);
+  const [isLoading, setIsLoading] =
+    useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -72,10 +86,23 @@ export default function NotificationSettings({
     }
 
     let active = true;
-    void window.desktop.settings
-      .get()
+    const versionAtLoad =
+      mutationVersion.current;
+    setIsLoading(true);
+
+    void saveQueue.current
+      .then(() =>
+        window.desktop.settings
+          .get(),
+      )
       .then((settings) => {
-        if (active) {
+        if (
+          active &&
+          mutationVersion.current ===
+            versionAtLoad
+        ) {
+          preferencesRef.current =
+            settings.notifications;
           setPreferences(
             settings.notifications,
           );
@@ -85,10 +112,15 @@ export default function NotificationSettings({
       .catch((loadError) => {
         if (active) {
           setError(
-            loadError instanceof Error
-              ? loadError.message
-              : String(loadError),
+            getErrorMessage(
+              loadError,
+            ),
           );
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setIsLoading(false);
         }
       });
 
@@ -105,25 +137,64 @@ export default function NotificationSettings({
     key: keyof NotificationPreferences,
     value: boolean,
   ): void => {
-    const previous = preferences;
-    setPreferences({
-      ...preferences,
+    if (isLoading) {
+      return;
+    }
+
+    const previous =
+      preferencesRef.current;
+    const next = {
+      ...previous,
       [key]: value,
-    });
+    };
+    const version =
+      ++mutationVersion.current;
+
+    preferencesRef.current = next;
+    setPreferences(next);
     setError(null);
 
-    void window.desktop.settings
-      .updateNotifications({
-        [key]: value,
+    const operation =
+      saveQueue.current.then(
+        () =>
+          window.desktop.settings
+            .updateNotifications({
+              [key]: value,
+            }),
+      );
+    saveQueue.current =
+      operation.then(
+        () => undefined,
+        () => undefined,
+      );
+
+    void operation
+      .then((savedPreferences) => {
+        if (
+          version ===
+          mutationVersion.current
+        ) {
+          preferencesRef.current =
+            savedPreferences;
+          setPreferences(
+            savedPreferences,
+          );
+        }
       })
-      .then(setPreferences)
       .catch((saveError) => {
-        setPreferences(previous);
-        setError(
-          saveError instanceof Error
-            ? saveError.message
-            : String(saveError),
-        );
+        if (
+          version ===
+          mutationVersion.current
+        ) {
+          preferencesRef.current =
+            previous;
+          setPreferences(previous);
+          setError(
+            getErrorMessage(
+              saveError,
+            ),
+          );
+        }
       });
   };
 
@@ -167,6 +238,7 @@ export default function NotificationSettings({
           Enable notifications
           <input
             type="checkbox"
+            disabled={isLoading}
             checked={preferences.enabled}
             onChange={(event) =>
               update(
@@ -188,6 +260,7 @@ export default function NotificationSettings({
                 <input
                   type="checkbox"
                   disabled={
+                    isLoading ||
                     !preferences.enabled
                   }
                   checked={

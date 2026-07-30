@@ -76,18 +76,26 @@ function parseNotificationPreferences(
 
   const defaults =
     DEFAULT_NOTIFICATION_PREFERENCES;
+  const read = (
+    key: keyof NotificationPreferences,
+  ): boolean =>
+    typeof value[key] === "boolean"
+      ? value[key]
+      : defaults[key];
 
-  return Object.fromEntries(
-    Object.entries(defaults).map(
-      ([key, fallback]) => [
-        key,
-        typeof value[key] ===
-        "boolean"
-          ? value[key]
-          : fallback,
-      ],
-    ),
-  ) as unknown as NotificationPreferences;
+  return {
+    enabled: read("enabled"),
+    printStarted: read("printStarted"),
+    printPaused: read("printPaused"),
+    printCompleted: read("printCompleted"),
+    printStopped: read("printStopped"),
+    printerDisconnected:
+      read("printerDisconnected"),
+    printerErrors:
+      read("printerErrors"),
+    temperatureReached:
+      read("temperatureReached"),
+  };
 }
 
 export class AppSettingsStore {

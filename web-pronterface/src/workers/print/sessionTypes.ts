@@ -12,8 +12,8 @@ import type {
 } from "../../types/printer";
 
 import type {
-  PreparedCommands,
-} from "../gcode/prepareCommands";
+  RealPrintCommandSource,
+} from "./realPrintJob";
 
 export interface BaseSession {
   mode: Exclude<
@@ -45,8 +45,10 @@ export interface RealSession
   extends BaseSession {
   mode: "real";
 
-  commands:
-    PreparedCommands;
+  commandSource:
+    RealPrintCommandSource | null;
+  commandLayers:
+    Uint32Array<ArrayBufferLike>;
   timing:
     RealPrintTimingPayload;
   calibration:

@@ -60,8 +60,11 @@ function FilePanel({
         <button
           type="button"
           onClick={onChooseFile}
-          disabled={isLoading}
-          className="w-full border-2 border-dashed border-gray-800 hover:border-blue-500/50 bg-[#181d2c]/50 rounded-lg px-4 py-4 flex items-center justify-center gap-2 text-xs text-gray-400 disabled:cursor-wait"
+          disabled={
+            isLoading ||
+            hasActivePrint
+          }
+          className="w-full border-2 border-dashed border-gray-800 hover:border-blue-500/50 bg-[#181d2c]/50 rounded-lg px-4 py-4 flex items-center justify-center gap-2 text-xs text-gray-400 disabled:cursor-not-allowed"
         >
           <span aria-hidden="true">
             ...
@@ -146,7 +149,10 @@ function FilePanel({
                           file.path,
                         )
                       }
-                      disabled={isLoading}
+                      disabled={
+                        isLoading ||
+                        hasActivePrint
+                      }
                       title={file.path}
                       className="min-w-0 flex-1 text-left disabled:opacity-50"
                     >

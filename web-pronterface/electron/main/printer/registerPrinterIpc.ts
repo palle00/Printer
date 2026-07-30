@@ -1,7 +1,9 @@
 import {
+  app,
   ipcMain,
   type BrowserWindow,
 } from "electron";
+import path from "node:path";
 
 import {
   PRINTER_IPC,
@@ -17,6 +19,9 @@ import {
 import {
   assertTrustedSender,
 } from "../ipc/assertTrustedSender";
+import {
+  VerifiedGcodeCommandSource,
+} from "../files/VerifiedGcodeCommandSource";
 
 interface RegisterPrinterIpcOptions {
   getWindow(): BrowserWindow | null;
@@ -96,10 +101,41 @@ export function registerPrinterIpc({
 
   ipcMain.handle(
     PRINTER_IPC.startPrint,
-    (event, value: unknown) => {
+    async (
+      event,
+      value: unknown,
+    ) => {
       assertTrustedSender(event, getWindow());
       assertRealPrintPayload(value);
-      runtime.startPrint(value);
+      const commandSource =
+        await VerifiedGcodeCommandSource
+          .open(
+            value.source,
+            value.commandLayers
+              .length,
+            path.join(
+              app.getPath("temp"),
+              "PrintInterface",
+              "print-spool",
+            ),
+          );
+
+      try {
+        runtime.startPrint({
+          fileName: path.basename(
+            value.source.path,
+          ),
+          commandSource,
+          commandLayers:
+            value.commandLayers,
+          totalLayers:
+            value.totalLayers,
+          timing: value.timing,
+        });
+      } catch (error) {
+        await commandSource.close();
+        throw error;
+      }
     },
   );
 

@@ -1,6 +1,5 @@
 import type {
     NativeSerialPortInfo,
-    RealPrintPayload,
     TestPrintPayload,
 } from "../../../src/types/printer-ipc";
 
@@ -20,6 +19,9 @@ import {
 import {
     PrintSessionManager,
 } from "../../../src/workers/print/PrintSessionManager";
+import type {
+    RealPrintJob,
+} from "../../../src/workers/print/realPrintJob";
 
 import {
     parsePrinterResponse,
@@ -46,6 +48,9 @@ interface PrinterRuntimeOptions {
         active: boolean,
     ): void;
 }
+
+const POSITION_QUERY_TIMEOUT_MS =
+    5_000;
 
 function statusRequiresAwakeComputer(
     status: PrinterStatus,
@@ -78,6 +83,12 @@ export class PrinterRuntime {
         TemperaturePoller;
 
     private disposed = false;
+
+    get isPrintActive():
+        boolean {
+        return this.prints
+            .isActive;
+    }
 
     constructor(
         private readonly options:
@@ -186,8 +197,11 @@ export class PrinterRuntime {
          * Request the current position after
          * connecting. M114 is optional.
          */
-        await this.serialQueue
-            .queue("M114")
+        void this.serialQueue
+            .queue(
+                "M114",
+                POSITION_QUERY_TIMEOUT_MS,
+            )
             .catch(() => undefined);
     }
 
@@ -212,6 +226,12 @@ export class PrinterRuntime {
     async sendGcode(
         gcode: string,
     ): Promise<void> {
+        if (this.prints.isActive) {
+            throw new Error(
+                "Manual G-code cannot be sent while a print is active.",
+            );
+        }
+
         try {
             await this.serialQueue
                 .sendMany(gcode);
@@ -222,8 +242,28 @@ export class PrinterRuntime {
     }
 
     startPrint(
-        print: RealPrintPayload,
+        print: RealPrintJob,
     ): void {
+        if (this.disposed) {
+            throw new Error(
+                "Printer runtime has been disposed.",
+            );
+        }
+
+        if (
+            !this.connection.connected
+        ) {
+            throw new Error(
+                "Connect the printer before starting a real print.",
+            );
+        }
+
+        if (this.prints.isActive) {
+            throw new Error(
+                "A print is already active.",
+            );
+        }
+
         this.prints.startReal(print);
     }
 

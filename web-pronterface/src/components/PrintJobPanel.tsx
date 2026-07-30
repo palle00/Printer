@@ -206,7 +206,9 @@ export default function PrintJobPanel({
               onClick={
                 onStartTestPrint
               }
-              disabled={!gcode}
+              disabled={
+                !canStartTestPrint
+              }
               className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-800 disabled:text-gray-600 text-white py-2 rounded text-xs font-bold uppercase"
             >
               Restart Test

@@ -15,24 +15,6 @@ export type EstimateConfidence =
   | "medium"
   | "high";
 
-export interface GcodePoint {
-  x: number;
-  y: number;
-  z: number;
-  extruding: boolean;
-  layer: number;
-}
-
-export interface GcodeSegment {
-  start: GcodePoint;
-  end: GcodePoint;
-
-  layer: number;
-  commandIndex: number;
-  extruding: boolean;
-  feature: GcodeFeatureCategory;
-}
-
 export interface GcodeFeatureStatistics {
   category: GcodeFeatureCategory;
   pathCount: number;
@@ -81,8 +63,10 @@ export interface ParsedGcode {
   fileName: string;
   filePath: string | null;
   fileSize: number | null;
-  lines: string[];
+  fileSha256: string | null;
   segments: GcodeSegmentStore;
+  commandLayers:
+    Uint32Array<ArrayBufferLike>;
   statistics: GcodeStatistics;
   timing: GcodeTimingModel;
 

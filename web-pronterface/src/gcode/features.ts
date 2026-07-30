@@ -119,9 +119,6 @@ export const PRINTED_PATH_COLOR =
 export type GcodeFeatureCategory =
   (typeof GCODE_FEATURES)[number]["id"];
 
-export const GCODE_FEATURE_COUNT =
-  GCODE_FEATURES.length;
-
 const featureIndexById = new Map<
   GcodeFeatureCategory,
   number

@@ -5,6 +5,12 @@ import {
 import path from "node:path";
 import test from "node:test";
 
+import "./gcodeParser.test";
+import "./gcodeFileSource.test";
+import "./positionTracker.test";
+import "./printerState.test";
+import "./safeStop.test";
+
 import {
   estimateMotionSeconds,
   extractSlicerTimeMetadata,
@@ -17,9 +23,6 @@ import {
 import {
   getElapsedMilliseconds,
 } from "../src/workers/print/sessionUtils";
-import {
-  prepareCommands,
-} from "../src/workers/gcode/prepareCommands";
 import type {
   TestSession,
 } from "../src/workers/print/sessionTypes";
@@ -70,13 +73,34 @@ test(
       parsed.segments.length,
       1_333_927,
     );
+    const retainedArrayBytes =
+      parsed.segments.coordinates
+        .byteLength +
+      parsed.segments.commandIndexes
+        .byteLength +
+      parsed.segments.layers
+        .byteLength +
+      parsed.segments.extruding
+        .byteLength +
+      parsed.segments.featureIndexes
+        .byteLength +
+      parsed.commandLayers.byteLength +
+      parsed.timing
+        .cumulativeSeconds.byteLength;
+
+    assert.ok(
+      retainedArrayBytes <
+        64 * 1024 * 1024,
+      `Expected compact preview arrays, received ${retainedArrayBytes} bytes.`,
+    );
+    assert.equal(
+      "lines" in parsed,
+      false,
+    );
     assert.equal(
       parsed.timing
         .cumulativeSeconds.length,
-      prepareCommands(
-        parsed.lines,
-        parsed.totalLayers,
-      ).texts.length + 1,
+      parsed.printableLines + 1,
     );
     assert.equal(
       parsed.timing.source,

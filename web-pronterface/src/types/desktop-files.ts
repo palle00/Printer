@@ -3,11 +3,13 @@ import type {
   NotificationPreferences,
   RecentFileEntry,
 } from "./settings";
+import type {
+  GcodeFileFingerprint,
+} from "./gcode-file";
 
-export interface GcodeFileData {
-  path: string;
+export interface GcodeFileData
+  extends GcodeFileFingerprint {
   name: string;
-  size: number;
   text: string;
 }
 

@@ -2,6 +2,12 @@ import type {
   RealPrintPayload,
   TestPrintPayload,
 } from "../../../src/types/printer-ipc";
+import {
+  MAXIMUM_GCODE_FILE_SIZE,
+} from "../files/gcodeFileValidation";
+
+const SHA256_PATTERN =
+  /^[a-f0-9]{64}$/;
 
 export function assertBaudRate(value: unknown): number {
   const baudRate = value === undefined ? 115200 : Number(value);
@@ -39,19 +45,38 @@ export function assertRealPrintPayload(
   }
 
   const print = value as Partial<RealPrintPayload>;
+  const source = print.source;
 
   if (
-    typeof print.fileName !== "string" ||
-    print.fileName.trim().length === 0
+    !source ||
+    typeof source !== "object" ||
+    typeof source.path !== "string" ||
+    source.path.trim().length === 0 ||
+    source.path.length > 32_767 ||
+    !Number.isSafeInteger(source.size) ||
+    source.size <= 0 ||
+    source.size >
+      MAXIMUM_GCODE_FILE_SIZE ||
+    typeof source.sha256 !==
+      "string" ||
+    !SHA256_PATTERN.test(
+      source.sha256,
+    )
   ) {
-    throw new Error("Print file name is missing.");
+    throw new Error(
+      "Print payload contains an invalid file fingerprint.",
+    );
   }
 
   if (
-    !Array.isArray(print.lines) ||
-    !print.lines.every((line) => typeof line === "string")
+    !(
+      print.commandLayers instanceof
+      Uint32Array
+    )
   ) {
-    throw new Error("Print payload contains invalid G-code lines.");
+    throw new Error(
+      "Print payload contains invalid command layers.",
+    );
   }
 
   if (
@@ -59,6 +84,19 @@ export function assertRealPrintPayload(
     (print.totalLayers ?? -1) < 0
   ) {
     throw new Error("Print payload contains an invalid layer count.");
+  }
+
+  if (
+    print.commandLayers.some(
+      (layer) =>
+        layer < 1 ||
+        layer >
+          (print.totalLayers ?? 0),
+    )
+  ) {
+    throw new Error(
+      "Print payload contains invalid command layers.",
+    );
   }
 
   const timing = print.timing;
@@ -70,6 +108,8 @@ export function assertRealPrintPayload(
       Float32Array
     ) ||
     timing.cumulativeSeconds.length < 1 ||
+    timing.cumulativeSeconds.length !==
+      print.commandLayers.length + 1 ||
     typeof timing.totalSeconds !== "number" ||
     !Number.isFinite(timing.totalSeconds) ||
     timing.totalSeconds < 0 ||

@@ -1,9 +1,4 @@
-import type {
-  GcodePoint,
-  GcodeSegment,
-} from "../types/gcode";
 import {
-  getFeatureCategory,
   getFeatureIndex,
   type GcodeFeatureCategory,
 } from "./features";
@@ -24,43 +19,6 @@ export class GcodeSegmentStore {
     return this.commandIndexes.length;
   }
 
-  get(index: number): GcodeSegment {
-    if (!Number.isInteger(index) || index < 0 || index >= this.length) {
-      throw new RangeError(`Invalid G-code segment index: ${index}`);
-    }
-
-    const offset = index * COORDINATES_PER_SEGMENT;
-    const extruding = this.extruding[index] !== 0;
-    const layer = this.layers[index];
-    const feature =
-      getFeatureCategory(
-        this.featureIndexes[index],
-      );
-
-    const start: GcodePoint = {
-      x: this.coordinates[offset],
-      y: this.coordinates[offset + 1],
-      z: this.coordinates[offset + 2],
-      extruding,
-      layer,
-    };
-    const end: GcodePoint = {
-      x: this.coordinates[offset + 3],
-      y: this.coordinates[offset + 4],
-      z: this.coordinates[offset + 5],
-      extruding,
-      layer,
-    };
-
-    return {
-      start,
-      end,
-      layer,
-      commandIndex: this.commandIndexes[index],
-      extruding,
-      feature,
-    };
-  }
 }
 
 export class GcodeSegmentStoreBuilder {

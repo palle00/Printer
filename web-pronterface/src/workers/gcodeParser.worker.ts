@@ -9,6 +9,7 @@ interface ParseRequest {
   text: string;
   filePath: string;
   fileSize: number;
+  fileSha256: string;
 }
 
 self.onmessage = (
@@ -20,6 +21,7 @@ self.onmessage = (
       text,
       filePath,
       fileSize,
+      fileSha256,
     } = event.data;
     const parsed = parseGcode(
       fileName,
@@ -27,6 +29,7 @@ self.onmessage = (
       {
         filePath,
         fileSize,
+        fileSha256,
       },
     );
     const transfers: Transferable[] = [
@@ -39,6 +42,8 @@ self.onmessage = (
       parsed.segments.extruding
         .buffer as ArrayBuffer,
       parsed.segments.featureIndexes
+        .buffer as ArrayBuffer,
+      parsed.commandLayers
         .buffer as ArrayBuffer,
       parsed.timing.cumulativeSeconds
         .buffer as ArrayBuffer,

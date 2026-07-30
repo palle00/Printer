@@ -50,6 +50,15 @@ export default function App() {
     event: DragEvent<HTMLDivElement>,
   ): void => {
     event.preventDefault();
+
+    if (
+      dashboard.hasActivePrint
+    ) {
+      dragDepth.current = 0;
+      setIsDraggingFile(false);
+      return;
+    }
+
     dragDepth.current++;
 
     if (
@@ -103,7 +112,9 @@ export default function App() {
       onDragOver={(event) => {
         event.preventDefault();
         event.dataTransfer.dropEffect =
-          "copy";
+          dashboard.hasActivePrint
+            ? "none"
+            : "copy";
       }}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

@@ -48,17 +48,19 @@ export function usePrinterDashboard() {
     printer.connected &&
     printer.status === "idle" &&
     !printer.isTestMode &&
+    !isLoading &&
     gcode !== null;
 
   const canStartTestPrint =
     !printer.connected &&
     !hasActivePrint &&
+    !isLoading &&
     gcode !== null;
 
   useEffect(() => {
     printer.resetPrint();
   }, [
-    gcode?.fileName,
+    gcode,
     printer.resetPrint,
   ]);
 

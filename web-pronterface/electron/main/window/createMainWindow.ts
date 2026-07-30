@@ -9,7 +9,7 @@ import path from "node:path";
 function isSafeExternalUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:";
+    return url.protocol === "https:";
   } catch {
     return false;
   }
@@ -55,9 +55,15 @@ export function createMainWindow(
       contextIsolation: true,
       sandbox: true,
       webSecurity: true,
-      backgroundThrottling: false,
     },
   });
+
+  window.webContents.session
+    .setPermissionRequestHandler(
+      (_webContents, _permission, callback) => {
+        callback(false);
+      },
+    );
 
   window.once("ready-to-show", () => {
     window.show();

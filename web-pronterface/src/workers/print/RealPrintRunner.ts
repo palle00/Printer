@@ -30,12 +30,28 @@ export class RealPrintRunner {
   async run(
     session: RealSession,
   ): Promise<void> {
+    const commandSource =
+      session.commandSource;
+
+    if (!commandSource) {
+      this.context.error(
+        new Error(
+          "The print command source is unavailable.",
+        ),
+      );
+      this.context.stop(
+        session,
+        false,
+      );
+      return;
+    }
+
+    let index = 0;
+
     try {
-      for (
-        let index = 0;
-        index <
-        session.commands.texts.length;
-        index++
+      for await (
+        const command of
+        commandSource
       ) {
         if (
           !this.context.isCurrent(
@@ -59,9 +75,6 @@ export class RealPrintRunner {
           break;
         }
 
-        const command =
-          session.commands.texts[index];
-
         await this.queue.queue(
           command,
         );
@@ -78,11 +91,13 @@ export class RealPrintRunner {
           index + 1;
 
         session.currentLayer =
-          session.commands.layers[index];
+          session
+            .commandLayers[index];
 
         this.context.emitProgress(
           session,
         );
+        index++;
       }
 
       if (
@@ -94,21 +109,9 @@ export class RealPrintRunner {
       }
 
       if (session.stopRequested) {
-        await safeStopPrinter(
-          this.queue,
+        await this.stopSafely(
+          session,
         );
-
-        if (
-          this.context.isCurrent(
-            session,
-          )
-        ) {
-          this.context.stop(
-            session,
-            false,
-          );
-        }
-
         return;
       }
 
@@ -124,13 +127,61 @@ export class RealPrintRunner {
         return;
       }
 
-      this.context.error(error);
-
-      this.context.stop(
+      await this.stopSafely(
         session,
-        false,
+        session.stopRequested
+          ? undefined
+          : error,
+      );
+    } finally {
+      await commandSource.close();
+    }
+  }
+
+  private async stopSafely(
+    session: RealSession,
+    printError?: unknown,
+  ): Promise<void> {
+    let reportedError =
+      printError;
+
+    try {
+      await safeStopPrinter(
+        this.queue,
+      );
+    } catch (stopError) {
+      reportedError =
+        reportedError === undefined
+          ? stopError
+          : new AggregateError(
+              [
+                reportedError,
+                stopError,
+              ],
+              "The print failed and the printer could not be stopped cleanly.",
+            );
+    }
+
+    if (
+      !this.context.isCurrent(
+        session,
+      )
+    ) {
+      return;
+    }
+
+    if (
+      reportedError !== undefined
+    ) {
+      this.context.error(
+        reportedError,
       );
     }
+
+    this.context.stop(
+      session,
+      false,
+    );
   }
 
   private async waitWhilePaused(
