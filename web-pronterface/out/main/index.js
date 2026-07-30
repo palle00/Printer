@@ -4,6 +4,7 @@ const path = require("node:path");
 const node_fs = require("node:fs");
 const parserReadline = require("@serialport/parser-readline");
 const serialport = require("serialport");
+const electronUpdater = require("electron-updater");
 const PRINTER_IPC = {
   listPorts: "printer:list-ports",
   connect: "printer:connect",
@@ -2855,6 +2856,154 @@ class NotificationService {
     notification.show();
   }
 }
+const INITIAL_CHECK_DELAY_MS = 1e4;
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1e3;
+class ApplicationUpdater {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  checkTimer = null;
+  checkInterval = null;
+  downloadedUpdate = null;
+  printActive = false;
+  promptOpen = false;
+  installing = false;
+  postponed = false;
+  disposed = false;
+  start() {
+    if (this.disposed || !electron.app.isPackaged) {
+      return;
+    }
+    electronUpdater.autoUpdater.autoDownload = true;
+    electronUpdater.autoUpdater.autoInstallOnAppQuit = false;
+    electronUpdater.autoUpdater.allowPrerelease = false;
+    electronUpdater.autoUpdater.allowDowngrade = false;
+    electronUpdater.autoUpdater.logger = console;
+    electronUpdater.autoUpdater.on(
+      "update-downloaded",
+      this.handleUpdateDownloaded
+    );
+    electronUpdater.autoUpdater.on(
+      "error",
+      this.handleUpdateError
+    );
+    this.checkTimer = setTimeout(() => {
+      this.checkTimer = null;
+      void this.checkForUpdates();
+    }, INITIAL_CHECK_DELAY_MS);
+    this.checkTimer.unref();
+    this.checkInterval = setInterval(() => {
+      void this.checkForUpdates();
+    }, UPDATE_CHECK_INTERVAL_MS);
+    this.checkInterval.unref();
+  }
+  setPrintActive(active) {
+    this.printActive = active;
+    if (!active) {
+      void this.promptForUpdate();
+    }
+  }
+  dispose() {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    if (this.checkTimer) {
+      clearTimeout(
+        this.checkTimer
+      );
+      this.checkTimer = null;
+    }
+    if (this.checkInterval) {
+      clearInterval(
+        this.checkInterval
+      );
+      this.checkInterval = null;
+    }
+    electronUpdater.autoUpdater.removeListener(
+      "update-downloaded",
+      this.handleUpdateDownloaded
+    );
+    electronUpdater.autoUpdater.removeListener(
+      "error",
+      this.handleUpdateError
+    );
+  }
+  handleUpdateDownloaded = (event) => {
+    this.downloadedUpdate = event;
+    void this.promptForUpdate();
+  };
+  handleUpdateError = (error) => {
+    console.warn(
+      "Application update failed.",
+      error
+    );
+  };
+  async checkForUpdates() {
+    if (this.disposed || this.downloadedUpdate || this.installing) {
+      return;
+    }
+    try {
+      await electronUpdater.autoUpdater.checkForUpdates();
+    } catch (error) {
+      this.handleUpdateError(
+        error instanceof Error ? error : new Error(
+          String(error)
+        )
+      );
+    }
+  }
+  async promptForUpdate() {
+    if (this.disposed || this.printActive || this.promptOpen || this.installing || this.postponed || !this.downloadedUpdate) {
+      return;
+    }
+    this.promptOpen = true;
+    this.options.showWindow();
+    const window = this.options.getWindow();
+    try {
+      const result = window ? await electron.dialog.showMessageBox(
+        window,
+        {
+          type: "info",
+          title: "PrintInterface update",
+          message: `PrintInterface ${this.downloadedUpdate.version} is ready to install.`,
+          detail: "The application will close, install the update, and reopen.",
+          buttons: [
+            "Restart and update",
+            "Later"
+          ],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true
+        }
+      ) : await electron.dialog.showMessageBox({
+        type: "info",
+        title: "PrintInterface update",
+        message: `PrintInterface ${this.downloadedUpdate.version} is ready to install.`,
+        detail: "The application will close, install the update, and reopen.",
+        buttons: [
+          "Restart and update",
+          "Later"
+        ],
+        defaultId: 0,
+        cancelId: 1,
+        noLink: true
+      });
+      if (result.response === 0 && !this.printActive) {
+        this.installing = true;
+        electronUpdater.autoUpdater.quitAndInstall(
+          false,
+          true
+        );
+      } else {
+        this.postponed = true;
+      }
+    } finally {
+      this.promptOpen = false;
+    }
+  }
+}
 let mainWindow = null;
 let tray = null;
 let printerRuntime = null;
@@ -2862,6 +3011,7 @@ let unregisterPrinterIpc = null;
 let unregisterDesktopIpc = null;
 let settingsStore = null;
 let notificationService = null;
+let applicationUpdater = null;
 let appIcon = null;
 const sleepBlocker = new PrintSleepBlocker();
 function getAppIconPath() {
@@ -2901,6 +3051,9 @@ function initialisePrinter() {
     },
     setPrintingActive: (active) => {
       sleepBlocker.setPrintingActive(active);
+      applicationUpdater?.setPrintActive(
+        active
+      );
     }
   });
   unregisterPrinterIpc = registerPrinterIpc({
@@ -2960,15 +3113,22 @@ if (!hasSingleInstanceLock) {
       getIcon: getAppIcon,
       settings: settingsStore
     });
+    applicationUpdater = new ApplicationUpdater({
+      getWindow: () => mainWindow,
+      showWindow: showMainWindow
+    });
     createMainWindow();
     tray = createTray(
       getAppIcon(),
       showMainWindow
     );
+    applicationUpdater.start();
     electron.app.on("activate", showMainWindow);
   });
 }
 electron.app.on("before-quit", () => {
+  applicationUpdater?.dispose();
+  applicationUpdater = null;
   unregisterDesktopIpc?.();
   unregisterDesktopIpc = null;
   unregisterPrinterIpc?.();

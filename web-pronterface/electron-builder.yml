@@ -21,6 +21,12 @@ asarUnpack:
 compression: normal
 npmRebuild: true
 
+publish:
+  provider: github
+  owner: palle00
+  repo: Printer
+  releaseType: release
+
 win:
   icon: resources/tray-icon.png
   executableName: PrintInterface

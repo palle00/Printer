@@ -22,6 +22,9 @@ import {
 import {
   NotificationService,
 } from "./notifications/NotificationService";
+import {
+  ApplicationUpdater,
+} from "./updates/ApplicationUpdater";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -31,6 +34,8 @@ let unregisterDesktopIpc: (() => void) | null = null;
 let settingsStore: AppSettingsStore | null = null;
 let notificationService:
   NotificationService | null = null;
+let applicationUpdater:
+  ApplicationUpdater | null = null;
 let appIcon: NativeImage | null =
   null;
 
@@ -82,6 +87,10 @@ function initialisePrinter(): void {
     },
     setPrintingActive: (active) => {
       sleepBlocker.setPrintingActive(active);
+      applicationUpdater
+        ?.setPrintActive(
+          active,
+        );
     },
   });
 
@@ -164,17 +173,27 @@ if (!hasSingleInstanceLock) {
         settings:
           settingsStore,
       });
+    applicationUpdater =
+      new ApplicationUpdater({
+        getWindow: () =>
+          mainWindow,
+        showWindow:
+          showMainWindow,
+      });
 
     createMainWindow();
     tray = createAppTray(
       getAppIcon(),
       showMainWindow,
     );
+    applicationUpdater.start();
     app.on("activate", showMainWindow);
   });
 }
 
 app.on("before-quit", () => {
+  applicationUpdater?.dispose();
+  applicationUpdater = null;
   unregisterDesktopIpc?.();
   unregisterDesktopIpc = null;
   unregisterPrinterIpc?.();

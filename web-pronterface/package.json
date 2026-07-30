@@ -1,9 +1,14 @@
 {
   "name": "PrintInterface",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Desktop 3D printer controller",
   "author": "Patrick Bertelsen",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/palle00/Printer.git",
+    "directory": "web-pronterface"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -22,6 +27,7 @@
   },
   "dependencies": {
     "@serialport/parser-readline": "^13.0.0",
+    "electron-updater": "^6.8.9",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "serialport": "^13.0.0",
