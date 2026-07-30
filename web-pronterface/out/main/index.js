@@ -1785,20 +1785,43 @@ function assertBaudRate(value) {
   }
   return baudRate;
 }
-function assertGcode(value) {
+function assertRealPrintPayload(value) {
   if (!value || typeof value !== "object") {
     throw new Error(
-      "Invalid G-code payload."
+      "Invalid real-print payload."
+    );
+  }
+  const print = value;
+  if (typeof print.fileName !== "string" || print.fileName.trim().length === 0) {
+    throw new Error(
+      "Print file name is missing."
+    );
+  }
+  if (!Array.isArray(print.lines) || !print.lines.every(
+    (line) => typeof line === "string"
+  )) {
+    throw new Error(
+      "Print payload contains invalid G-code lines."
+    );
+  }
+  if (typeof print.totalLayers !== "number" || !Number.isFinite(
+    print.totalLayers
+  ) || print.totalLayers < 0) {
+    throw new Error(
+      "Print payload contains an invalid layer count."
+    );
+  }
+}
+function assertParsedGcode(value) {
+  if (!value || typeof value !== "object") {
+    throw new Error(
+      "Invalid test-print payload."
     );
   }
   const gcode = value;
-  if (typeof gcode.fileName !== "string" || !Array.isArray(
-    gcode.lines
-  ) || !Array.isArray(
-    gcode.segments
-  ) || typeof gcode.totalLayers !== "number" || typeof gcode.printableLines !== "number") {
+  if (typeof gcode.fileName !== "string" || !Array.isArray(gcode.lines) || !Array.isArray(gcode.segments) || typeof gcode.totalLayers !== "number" || typeof gcode.printableLines !== "number") {
     throw new Error(
-      "Invalid G-code payload."
+      "Invalid test-print payload."
     );
   }
 }
@@ -1943,8 +1966,12 @@ function registerPrinterIpc({
         event,
         getWindow()
       );
-      assertGcode(value);
-      runtime.startPrint(value);
+      assertRealPrintPayload(
+        value
+      );
+      runtime.startPrint(
+        value
+      );
     }
   );
   electron.ipcMain.handle(
@@ -1954,7 +1981,9 @@ function registerPrinterIpc({
         event,
         getWindow()
       );
-      assertGcode(value);
+      assertParsedGcode(
+        value
+      );
       runtime.startTestPrint(
         value
       );
@@ -2029,7 +2058,7 @@ function openExternalUrl(value) {
     value
   );
 }
-function getTrayIconPath() {
+function getAppIconPath() {
   if (electron.app.isPackaged) {
     return path.join(
       process.resourcesPath,
@@ -2085,7 +2114,7 @@ function createTray() {
     return;
   }
   tray = new electron.Tray(
-    getTrayIconPath()
+    getAppIconPath()
   );
   tray.setToolTip(
     "Web Pronterface"
@@ -2120,7 +2149,8 @@ function createTray() {
 }
 function createMainWindow() {
   const window = new electron.BrowserWindow({
-    title: "Web Pronterface",
+    title: "PrintInterface",
+    icon: getAppIconPath(),
     width: 1500,
     height: 950,
     minWidth: 1050,

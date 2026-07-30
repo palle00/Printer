@@ -66,7 +66,7 @@ function openExternalUrl(
   );
 }
 
-function getTrayIconPath():
+function getAppIconPath():
   string {
   if (app.isPackaged) {
     return path.join(
@@ -155,7 +155,7 @@ function createTray(): void {
   }
 
   tray = new Tray(
-    getTrayIconPath(),
+    getAppIconPath(),
   );
 
   tray.setToolTip(
@@ -203,7 +203,10 @@ function createMainWindow():
   const window =
     new BrowserWindow({
       title:
-        "Web Pronterface",
+        "PrintInterface",
+
+      icon:
+        getAppIconPath(),
 
       width: 1500,
       height: 950,
@@ -215,7 +218,6 @@ function createMainWindow():
         "#0b0e14",
 
       show: false,
-
       autoHideMenuBar: true,
 
       webPreferences: {
@@ -228,11 +230,10 @@ function createMainWindow():
         contextIsolation: true,
         sandbox: true,
         webSecurity: true,
-
-        backgroundThrottling:
-          false,
+        backgroundThrottling: false,
       },
     });
+
 
   mainWindow = window;
 
@@ -298,7 +299,7 @@ function createMainWindow():
 
       const developmentUrl =
         process.env[
-          "ELECTRON_RENDERER_URL"
+        "ELECTRON_RENDERER_URL"
         ];
 
       if (
@@ -327,7 +328,7 @@ function createMainWindow():
 
   const developmentUrl =
     process.env[
-      "ELECTRON_RENDERER_URL"
+    "ELECTRON_RENDERER_URL"
     ];
 
   if (

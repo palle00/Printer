@@ -13,6 +13,7 @@ import {
   PRINTER_IPC,
   type NativeSerialPortInfo,
   type PrinterConnectionResult,
+  type RealPrintPayload,
 } from "../../../src/types/printer-ipc";
 
 import type {
@@ -68,7 +69,56 @@ function assertBaudRate(
   return baudRate;
 }
 
-function assertGcode(
+function assertRealPrintPayload(
+  value: unknown,
+): asserts value is RealPrintPayload {
+  if (
+    !value ||
+    typeof value !== "object"
+  ) {
+    throw new Error(
+      "Invalid real-print payload.",
+    );
+  }
+
+  const print =
+    value as Partial<RealPrintPayload>;
+
+  if (
+    typeof print.fileName !== "string" ||
+    print.fileName.trim().length === 0
+  ) {
+    throw new Error(
+      "Print file name is missing.",
+    );
+  }
+
+  if (
+    !Array.isArray(print.lines) ||
+    !print.lines.every(
+      (line) =>
+        typeof line === "string",
+    )
+  ) {
+    throw new Error(
+      "Print payload contains invalid G-code lines.",
+    );
+  }
+
+  if (
+    typeof print.totalLayers !== "number" ||
+    !Number.isFinite(
+      print.totalLayers,
+    ) ||
+    print.totalLayers < 0
+  ) {
+    throw new Error(
+      "Print payload contains an invalid layer count.",
+    );
+  }
+}
+
+function assertParsedGcode(
   value: unknown,
 ): asserts value is ParsedGcode {
   if (
@@ -76,7 +126,7 @@ function assertGcode(
     typeof value !== "object"
   ) {
     throw new Error(
-      "Invalid G-code payload.",
+      "Invalid test-print payload.",
     );
   }
 
@@ -84,21 +134,14 @@ function assertGcode(
     value as Partial<ParsedGcode>;
 
   if (
-    typeof gcode.fileName !==
-      "string" ||
-    !Array.isArray(
-      gcode.lines,
-    ) ||
-    !Array.isArray(
-      gcode.segments,
-    ) ||
-    typeof gcode.totalLayers !==
-      "number" ||
-    typeof gcode.printableLines !==
-      "number"
+    typeof gcode.fileName !== "string" ||
+    !Array.isArray(gcode.lines) ||
+    !Array.isArray(gcode.segments) ||
+    typeof gcode.totalLayers !== "number" ||
+    typeof gcode.printableLines !== "number"
   ) {
     throw new Error(
-      "Invalid G-code payload.",
+      "Invalid test-print payload.",
     );
   }
 }
@@ -326,42 +369,47 @@ export function registerPrinterIpc({
   );
 
   ipcMain.handle(
-    PRINTER_IPC.startPrint,
+  PRINTER_IPC.startPrint,
 
-    (
+  (
+    event,
+    value: unknown,
+  ): void => {
+    assertTrustedSender(
       event,
-      value: unknown,
-    ) => {
-      assertTrustedSender(
-        event,
-        getWindow(),
-      );
+      getWindow(),
+    );
 
-      assertGcode(value);
+    assertRealPrintPayload(
+      value,
+    );
 
-      runtime.startPrint(value);
-    },
-  );
+    runtime.startPrint(
+      value,
+    );
+  },
+);
+ipcMain.handle(
+  PRINTER_IPC.startTestPrint,
 
-  ipcMain.handle(
-    PRINTER_IPC.startTestPrint,
-
-    (
+  (
+    event,
+    value: unknown,
+  ): void => {
+    assertTrustedSender(
       event,
-      value: unknown,
-    ) => {
-      assertTrustedSender(
-        event,
-        getWindow(),
-      );
+      getWindow(),
+    );
 
-      assertGcode(value);
+    assertParsedGcode(
+      value,
+    );
 
-      runtime.startTestPrint(
-        value,
-      );
-    },
-  );
+    runtime.startTestPrint(
+      value,
+    );
+  },
+);
 
   ipcMain.handle(
     PRINTER_IPC.pausePrint,

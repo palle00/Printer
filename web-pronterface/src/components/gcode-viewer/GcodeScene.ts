@@ -19,19 +19,12 @@ import {
 } from "./sceneRenderer";
 
 import {
-  simplifyToolpath,
-} from "./simplifyToolpath";
-
-import {
   ToolpathRenderer,
 } from "./ToolpathRenderer";
 
 import {
   getSceneLayout,
 } from "./toolpath";
-
-const MAX_PREVIEW_SEGMENTS =
-  150_000;
 
 export class GcodeScene {
   private readonly sceneRenderer:
@@ -46,13 +39,6 @@ export class GcodeScene {
   private readonly nozzleRenderer:
     NozzleRenderer;
 
-  /*
-   * Prevents the same ParsedGcode object from being
-   * simplified again if the viewer rerenders.
-   */
-  private readonly simplifiedGcodes =
-    new WeakSet<ParsedGcode>();
-
   private disposed = false;
 
   constructor(
@@ -64,9 +50,7 @@ export class GcodeScene {
     this.cameraController =
       new CameraController(
         this.sceneRenderer.renderer,
-
-        this.sceneRenderer
-          .requestRender,
+        this.sceneRenderer.requestRender,
       );
 
     this.sceneRenderer.setCamera(
@@ -76,17 +60,13 @@ export class GcodeScene {
     this.toolpathRenderer =
       new ToolpathRenderer(
         this.sceneRenderer.scene,
-
-        this.sceneRenderer
-          .requestRender,
+        this.sceneRenderer.requestRender,
       );
 
     this.nozzleRenderer =
       new NozzleRenderer(
         this.sceneRenderer.scene,
-
-        this.sceneRenderer
-          .requestRender,
+        this.sceneRenderer.requestRender,
       );
 
     this.sceneRenderer.requestRender();
@@ -99,92 +79,23 @@ export class GcodeScene {
       percent: number,
     ) => void,
   ): Promise<void> {
-    if (this.disposed) {
-      return;
-    }
-
     if (
-      gcode &&
-      !this.simplifiedGcodes.has(
-        gcode,
-      )
+      this.disposed ||
+      signal.aborted
     ) {
-      const result =
-        simplifyToolpath(
-          gcode.segments,
-          {
-            targetSegments:
-              MAX_PREVIEW_SEGMENTS,
-
-            minimumSegmentLengthMm:
-              0.01,
-
-            connectionToleranceMm:
-              0.002,
-
-            initialAngleToleranceDegrees:
-              0.5,
-
-            maximumAngleToleranceDegrees:
-              8,
-
-            initialMaximumMergedLengthMm:
-              3,
-
-            maximumMergedLengthMm:
-              40,
-          },
-        );
-
-      /*
-       * Replace the original array instead of creating
-       * a second ParsedGcode copy.
-       *
-       * Once this function has finished, intermediate
-       * segment objects that are no longer referenced
-       * can be garbage-collected.
-       */
-      gcode.segments =
-        result.segments;
-
-      this.simplifiedGcodes.add(
-        gcode,
-      );
-
-      console.info(
-        [
-          "[G-code preview]",
-
-          result.originalCount
-            .toLocaleString(),
-
-          "segments →",
-
-          result.simplifiedCount
-            .toLocaleString(),
-
-          `(${result.reductionPercent}% reduction)`,
-
-          `angle ${result.angleToleranceDegrees.toFixed(2)}°`,
-
-          `length ${result.maximumMergedLengthMm.toFixed(1)} mm`,
-
-          result.targetLimitApplied
-            ? "target limit applied"
-            : "",
-        ]
-          .filter(Boolean)
-          .join(" "),
-      );
-    }
-
-    if (signal.aborted) {
       return;
     }
 
     const layout =
       getSceneLayout(gcode);
 
+    /*
+     * Pass the original paths to the renderer.
+     *
+     * Performance optimisation must happen while
+     * constructing GPU buffers—not by changing the
+     * shape of the print.
+     */
     const loadToolpath =
       this.toolpathRenderer.setGcode(
         gcode,
@@ -205,8 +116,8 @@ export class GcodeScene {
     await loadToolpath;
 
     if (
-      signal.aborted ||
-      this.disposed
+      this.disposed ||
+      signal.aborted
     ) {
       return;
     }
@@ -221,8 +132,9 @@ export class GcodeScene {
       return;
     }
 
-    this.toolpathRenderer
-      .setPreviewLayer(layer);
+    this.toolpathRenderer.setPreviewLayer(
+      layer,
+    );
   }
 
   setPrintedCommand(
@@ -232,8 +144,9 @@ export class GcodeScene {
       return;
     }
 
-    this.toolpathRenderer
-      .setPrintedCommand(command);
+    this.toolpathRenderer.setPrintedCommand(
+      command,
+    );
   }
 
   setNozzle(

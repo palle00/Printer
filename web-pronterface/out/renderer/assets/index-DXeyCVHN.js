@@ -12489,56 +12489,38 @@ const initialPrinterState = {
   }
 };
 function usePrinter() {
-  const workerRef = reactExports.useRef(null);
-  const portRef = reactExports.useRef(null);
   const [state, setState] = reactExports.useState(
     initialPrinterState
   );
-  const postCommand = reactExports.useCallback(
-    (command, transfer) => {
-      workerRef.current?.postMessage(
-        command,
-        transfer ?? []
-      );
+  const appendTerminal = reactExports.useCallback(
+    (text) => {
+      setState((previous) => ({
+        ...previous,
+        terminal: [
+          ...previous.terminal.slice(
+            -299
+          ),
+          text
+        ]
+      }));
     },
     []
   );
-  const appendTerminal = reactExports.useCallback((text) => {
-    setState((previous) => ({
-      ...previous,
-      terminal: [
-        ...previous.terminal.slice(
-          -299
-        ),
-        text
-      ]
-    }));
-  }, []);
-  const closePort = reactExports.useCallback(async () => {
-    const port = portRef.current;
-    portRef.current = null;
-    if (!port) {
-      return;
-    }
-    try {
-      await port.close();
-    } catch {
-    }
-  }, []);
+  const reportError2 = reactExports.useCallback(
+    (error2) => {
+      const message = error2 instanceof Error ? error2.message : String(error2);
+      setState((previous) => ({
+        ...previous,
+        error: message
+      }));
+      appendTerminal(
+        `>> ${message}`
+      );
+    },
+    [appendTerminal]
+  );
   reactExports.useEffect(() => {
-    const worker = new Worker(
-      new URL(
-        /* @vite-ignore */
-        "" + new URL("printerWorker-B1_VgQ92.js", import.meta.url).href,
-        import.meta.url
-      ),
-      {
-        type: "module"
-      }
-    );
-    workerRef.current = worker;
-    worker.onmessage = async (event) => {
-      const message = event.data;
+    const handleEvent = (message) => {
       switch (message.type) {
         case "CONNECTED": {
           setState((previous) => ({
@@ -12557,7 +12539,6 @@ function usePrinter() {
             status: "disconnected",
             mode: null
           }));
-          await closePort();
           break;
         }
         case "STATUS": {
@@ -12575,7 +12556,6 @@ function usePrinter() {
             progress: {
               ...initialPrintProgress,
               fileName: message.fileName,
-              currentLine: 0,
               totalLines: message.totalLines,
               currentLayer: message.totalLayers > 0 ? 1 : 0,
               totalLayers: message.totalLayers
@@ -12694,156 +12674,70 @@ function usePrinter() {
         }
       }
     };
-    worker.onerror = (event) => {
-      setState((previous) => ({
-        ...previous,
-        error: event.message || "Printer worker failed."
-      }));
-    };
-    return () => {
-      worker.postMessage({
-        type: "DISCONNECT"
-      });
-      worker.terminate();
-      workerRef.current = null;
-      void closePort();
-    };
-  }, [
-    appendTerminal,
-    closePort
-  ]);
+    return window.desktop.printer.onEvent(handleEvent);
+  }, [appendTerminal]);
   const connect = reactExports.useCallback(async () => {
-    if (!("serial" in navigator)) {
-      setState((previous) => ({
-        ...previous,
-        error: "Web Serial is not supported. Use Chrome, Edge, or Opera."
-      }));
-      return;
-    }
-    if (portRef.current) {
-      return;
-    }
     try {
-      const port = await navigator.serial.requestPort();
-      await port.open({
-        baudRate: 115200,
-        dataBits: 8,
-        stopBits: 1,
-        parity: "none",
-        flowControl: "none"
-      });
-      if (!port.readable || !port.writable) {
-        await port.close();
-        throw new Error(
-          "The serial port did not provide readable and writable streams."
-        );
-      }
-      portRef.current = port;
-      const readable = port.readable;
-      const writable = port.writable;
-      postCommand(
-        {
-          type: "CONNECT",
-          payload: {
-            readable,
-            writable
-          }
-        },
-        [
-          readable,
-          writable
-        ]
-      );
-    } catch (error2) {
-      if (error2 instanceof DOMException && error2.name === "NotFoundError") {
+      const connection = await window.desktop.printer.connect(115200);
+      if (!connection) {
         appendTerminal(
-          ">> Serial-port selection cancelled."
+          ">> Port selection cancelled."
         );
-        await closePort();
         return;
       }
-      const message = error2 instanceof Error ? error2.message : String(error2);
-      setState((previous) => ({
-        ...previous,
-        connected: false,
-        status: "disconnected",
-        error: message
-      }));
       appendTerminal(
-        `>> Connection failed: ${message}`
+        `>> Connected to ${connection.path} at ${connection.baudRate} baud.`
       );
-      await closePort();
+    } catch (error2) {
+      reportError2(error2);
     }
   }, [
     appendTerminal,
-    closePort,
-    postCommand
+    reportError2
   ]);
   const disconnect = reactExports.useCallback(() => {
-    postCommand({
-      type: "DISCONNECT"
-    });
-  }, [postCommand]);
+    void window.desktop.printer.disconnect().catch(reportError2);
+  }, [reportError2]);
   const sendGcode = reactExports.useCallback(
     (gcode) => {
       const cleaned = gcode.trim();
       if (!cleaned) {
         return;
       }
-      postCommand({
-        type: "SEND_GCODE",
-        payload: cleaned
-      });
+      void window.desktop.printer.sendGcode(cleaned).catch(reportError2);
     },
-    [postCommand]
+    [reportError2]
   );
   const startPrint = reactExports.useCallback(
     (gcode) => {
-      postCommand({
-        type: "START_REAL_PRINT",
-        payload: {
-          fileName: gcode.fileName,
-          lines: gcode.lines,
-          totalLayers: gcode.totalLayers
-        }
+      void window.desktop.printer.startPrint({
+        fileName: gcode.fileName,
+        lines: gcode.lines,
+        totalLayers: gcode.totalLayers
       });
     },
-    [postCommand]
+    [reportError2]
   );
   const startTestPrint = reactExports.useCallback(
     (gcode) => {
-      postCommand({
-        type: "START_TEST_PRINT",
-        payload: {
-          fileName: gcode.fileName,
-          printableLines: gcode.printableLines,
-          totalLayers: gcode.totalLayers,
-          segments: gcode.segments
-        }
-      });
+      void window.desktop.printer.startTestPrint(
+        gcode
+      ).catch(reportError2);
     },
-    [postCommand]
+    [reportError2]
   );
   const pausePrint = reactExports.useCallback(() => {
-    postCommand({
-      type: "PAUSE_PRINT"
-    });
-  }, [postCommand]);
+    void window.desktop.printer.pausePrint().catch(reportError2);
+  }, [reportError2]);
   const resumePrint = reactExports.useCallback(() => {
-    postCommand({
-      type: "RESUME_PRINT"
-    });
-  }, [postCommand]);
+    void window.desktop.printer.resumePrint().catch(reportError2);
+  }, [reportError2]);
   const stopPrint = reactExports.useCallback(() => {
-    postCommand({
-      type: "STOP_PRINT"
-    });
-  }, [postCommand]);
+    void window.desktop.printer.stopPrint().catch(reportError2);
+  }, [reportError2]);
   const resetPrint = reactExports.useCallback(() => {
-    postCommand({
-      type: "RESET_PRINT"
-    });
-  }, [postCommand]);
+    void window.desktop.printer.resetPrint().catch(reportError2);
+  }, [reportError2]);
   const clearTerminal = reactExports.useCallback(() => {
     setState((previous) => ({
       ...previous,
@@ -31692,11 +31586,12 @@ function WebGLMorphtargets(gl, capabilities, textures) {
     const morphTargetsCount = morphAttribute !== void 0 ? morphAttribute.length : 0;
     let entry = morphTextures.get(geometry);
     if (entry === void 0 || entry.count !== morphTargetsCount) {
-      let disposeTexture = function() {
+      let disposeTexture2 = function() {
         texture.dispose();
         morphTextures.delete(geometry);
-        geometry.removeEventListener("dispose", disposeTexture);
+        geometry.removeEventListener("dispose", disposeTexture2);
       };
+      var disposeTexture = disposeTexture2;
       if (entry !== void 0) entry.texture.dispose();
       const hasMorphPosition = geometry.morphAttributes.position !== void 0;
       const hasMorphNormals = geometry.morphAttributes.normal !== void 0;
@@ -31755,7 +31650,7 @@ function WebGLMorphtargets(gl, capabilities, textures) {
         size: new Vector2(width, height)
       };
       morphTextures.set(geometry, entry);
-      geometry.addEventListener("dispose", disposeTexture);
+      geometry.addEventListener("dispose", disposeTexture2);
     }
     if (object.isInstancedMesh === true && object.morphTexture !== null) {
       program.getUniforms().setValue(gl, "morphTexture", object.morphTexture, textures);
@@ -41794,6 +41689,242 @@ class SceneRenderer {
     this.requestRender();
   };
 }
+const DEFAULT_OPTIONS = {
+  targetSegments: 15e4,
+  initialToleranceMm: 0.03,
+  maximumToleranceMm: 1.2,
+  minimumSegmentLengthMm: 0.01,
+  connectionToleranceMm: 2e-3
+};
+function distanceSquared(first, second) {
+  const x = second.x - first.x;
+  const y = second.y - first.y;
+  const z = second.z - first.z;
+  return x * x + y * y + z * z;
+}
+function pointToSegmentDistanceSquared(point, start, end) {
+  const segmentX = end.x - start.x;
+  const segmentY = end.y - start.y;
+  const segmentZ = end.z - start.z;
+  const pointX = point.x - start.x;
+  const pointY = point.y - start.y;
+  const pointZ = point.z - start.z;
+  const segmentLengthSquared = segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
+  if (segmentLengthSquared === 0) {
+    return distanceSquared(
+      point,
+      start
+    );
+  }
+  const projection = (pointX * segmentX + pointY * segmentY + pointZ * segmentZ) / segmentLengthSquared;
+  const clampedProjection = Math.max(
+    0,
+    Math.min(1, projection)
+  );
+  const closestX = start.x + segmentX * clampedProjection;
+  const closestY = start.y + segmentY * clampedProjection;
+  const closestZ = start.z + segmentZ * clampedProjection;
+  const dx = point.x - closestX;
+  const dy = point.y - closestY;
+  const dz = point.z - closestZ;
+  return dx * dx + dy * dy + dz * dz;
+}
+function areConnected(previous, next, connectionToleranceSquared) {
+  if (previous.layer !== next.layer || previous.extruding !== next.extruding) {
+    return false;
+  }
+  return distanceSquared(
+    previous.end,
+    next.start
+  ) <= connectionToleranceSquared;
+}
+function splitIntoContinuousPaths(source, connectionToleranceSquared) {
+  if (source.length === 0) {
+    return [];
+  }
+  const ranges = [];
+  let rangeStart = 0;
+  for (let index = 1; index <= source.length; index++) {
+    const reachedEnd = index === source.length;
+    const continues = !reachedEnd && areConnected(
+      source[index - 1],
+      source[index],
+      connectionToleranceSquared
+    );
+    if (continues) {
+      continue;
+    }
+    ranges.push({
+      startIndex: rangeStart,
+      endIndexExclusive: index
+    });
+    rangeStart = index;
+  }
+  return ranges;
+}
+function simplifyPathRange(source, range, toleranceSquared, minimumLengthSquared, output) {
+  const segmentCount = range.endIndexExclusive - range.startIndex;
+  if (segmentCount <= 0) {
+    return;
+  }
+  const pointCount = segmentCount + 1;
+  const getPoint = (pointIndex) => {
+    if (pointIndex === 0) {
+      return source[range.startIndex].start;
+    }
+    return source[range.startIndex + pointIndex - 1].end;
+  };
+  const keep = new Uint8Array(pointCount);
+  keep[0] = 1;
+  keep[pointCount - 1] = 1;
+  const stack = [
+    0,
+    pointCount - 1
+  ];
+  while (stack.length > 0) {
+    const endPointIndex = stack.pop();
+    const startPointIndex = stack.pop();
+    if (startPointIndex === void 0 || endPointIndex === void 0 || endPointIndex - startPointIndex <= 1) {
+      continue;
+    }
+    const startPoint = getPoint(startPointIndex);
+    const endPoint = getPoint(endPointIndex);
+    let furthestPointIndex = -1;
+    let maximumDistanceSquared = 0;
+    for (let pointIndex = startPointIndex + 1; pointIndex < endPointIndex; pointIndex++) {
+      const distance = pointToSegmentDistanceSquared(
+        getPoint(pointIndex),
+        startPoint,
+        endPoint
+      );
+      if (distance > maximumDistanceSquared) {
+        maximumDistanceSquared = distance;
+        furthestPointIndex = pointIndex;
+      }
+    }
+    if (furthestPointIndex !== -1 && maximumDistanceSquared > toleranceSquared) {
+      keep[furthestPointIndex] = 1;
+      stack.push(
+        startPointIndex,
+        furthestPointIndex
+      );
+      stack.push(
+        furthestPointIndex,
+        endPointIndex
+      );
+    }
+  }
+  let previousKeptPoint = 0;
+  for (let pointIndex = 1; pointIndex < pointCount; pointIndex++) {
+    if (keep[pointIndex] === 0) {
+      continue;
+    }
+    const start = getPoint(previousKeptPoint);
+    const end = getPoint(pointIndex);
+    if (distanceSquared(start, end) >= minimumLengthSquared) {
+      const finalOriginalSegment = source[range.startIndex + pointIndex - 1];
+      output.push({
+        start,
+        end,
+        layer: finalOriginalSegment.layer,
+        extruding: finalOriginalSegment.extruding,
+        commandIndex: finalOriginalSegment.commandIndex
+      });
+    }
+    previousKeptPoint = pointIndex;
+  }
+}
+function simplifyPass(source, toleranceMm, minimumLengthMm, connectionToleranceMm) {
+  const output = [];
+  const toleranceSquared = toleranceMm * toleranceMm;
+  const minimumLengthSquared = minimumLengthMm * minimumLengthMm;
+  const connectionToleranceSquared = connectionToleranceMm * connectionToleranceMm;
+  const ranges = splitIntoContinuousPaths(
+    source,
+    connectionToleranceSquared
+  );
+  for (const range of ranges) {
+    simplifyPathRange(
+      source,
+      range,
+      toleranceSquared,
+      minimumLengthSquared,
+      output
+    );
+  }
+  return output;
+}
+function enforceHardLimit(source, targetSegments) {
+  if (source.length <= targetSegments) {
+    return [...source];
+  }
+  const output = [];
+  const step = source.length / targetSegments;
+  for (let index = 0; index < targetSegments; index++) {
+    const sourceIndex = Math.min(
+      source.length - 1,
+      Math.floor(index * step)
+    );
+    output.push(source[sourceIndex]);
+  }
+  return output;
+}
+function simplifyToolpath(source, suppliedOptions = {}) {
+  const options = {
+    ...DEFAULT_OPTIONS,
+    ...suppliedOptions
+  };
+  const originalCount = source.length;
+  if (originalCount === 0) {
+    return {
+      segments: [],
+      originalCount: 0,
+      simplifiedCount: 0,
+      reductionPercent: 0,
+      toleranceMm: options.initialToleranceMm,
+      targetLimitApplied: false
+    };
+  }
+  let toleranceMm = options.initialToleranceMm;
+  let simplified = simplifyPass(
+    source,
+    toleranceMm,
+    options.minimumSegmentLengthMm,
+    options.connectionToleranceMm
+  );
+  while (simplified.length > options.targetSegments && toleranceMm < options.maximumToleranceMm) {
+    toleranceMm = Math.min(
+      options.maximumToleranceMm,
+      toleranceMm * 1.6
+    );
+    simplified = simplifyPass(
+      source,
+      toleranceMm,
+      options.minimumSegmentLengthMm,
+      options.connectionToleranceMm
+    );
+  }
+  let targetLimitApplied = false;
+  if (simplified.length > options.targetSegments) {
+    simplified = enforceHardLimit(
+      simplified,
+      options.targetSegments
+    );
+    targetLimitApplied = true;
+  }
+  const simplifiedCount = simplified.length;
+  const reductionPercent = Math.round(
+    (1 - simplifiedCount / originalCount) * 1e4
+  ) / 100;
+  return {
+    segments: simplified,
+    originalCount,
+    simplifiedCount,
+    reductionPercent,
+    toleranceMm,
+    targetLimitApplied
+  };
+}
 class ToolpathRenderer {
   constructor(scene, requestRender) {
     this.scene = scene;
@@ -42012,11 +42143,17 @@ class ToolpathRenderer {
     }
   }
 }
+const MAX_PREVIEW_SEGMENTS = 15e4;
 class GcodeScene {
   sceneRenderer;
   cameraController;
   toolpathRenderer;
   nozzleRenderer;
+  /*
+   * Prevents the same ParsedGcode object from being
+   * simplified again if the viewer rerenders.
+   */
+  simplifiedGcodes = /* @__PURE__ */ new WeakSet();
   disposed = false;
   constructor(mount) {
     this.sceneRenderer = new SceneRenderer(mount);
@@ -42039,6 +42176,27 @@ class GcodeScene {
   }
   async setGcode(gcode, signal, onProgress) {
     if (this.disposed) {
+      return;
+    }
+    if (gcode && !this.simplifiedGcodes.has(
+      gcode
+    )) {
+      const result = simplifyToolpath(
+        gcode.segments,
+        {
+          targetSegments: MAX_PREVIEW_SEGMENTS,
+          initialToleranceMm: 0.03,
+          maximumToleranceMm: 1.2,
+          minimumSegmentLengthMm: 0.01,
+          connectionToleranceMm: 2e-3
+        }
+      );
+      gcode.segments = result.segments;
+      this.simplifiedGcodes.add(
+        gcode
+      );
+    }
+    if (signal.aborted) {
       return;
     }
     const layout = getSceneLayout(gcode);

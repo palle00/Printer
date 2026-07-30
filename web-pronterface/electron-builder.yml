@@ -22,6 +22,7 @@ compression: normal
 npmRebuild: true
 
 win:
+  icon: resources/tray-icon.png
   executableName: PrintInterface
 
   target:
