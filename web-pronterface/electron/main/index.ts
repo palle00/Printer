@@ -2,6 +2,7 @@ import {
   app,
   dialog,
   nativeImage,
+  Notification,
   type BrowserWindow,
   type NativeImage,
   type Tray,
@@ -40,7 +41,15 @@ let applicationUpdater:
 let appIcon: NativeImage | null =
   null;
 
+const WINDOWS_APP_USER_MODEL_ID =
+  "dk.patrick.PrintInterface";
 const sleepBlocker = new PrintSleepBlocker();
+
+if (process.platform === "win32") {
+  app.setAppUserModelId(
+    WINDOWS_APP_USER_MODEL_ID,
+  );
+}
 
 function getAppIconPath(): string {
   return app.isPackaged
@@ -164,7 +173,9 @@ if (!hasSingleInstanceLock) {
 
   void app.whenReady().then(async () => {
     if (process.platform === "win32") {
-      app.setAppUserModelId("dk.patrick.PrintInterface");
+      Notification.handleActivation(
+        showMainWindow,
+      );
     }
 
     settingsStore =

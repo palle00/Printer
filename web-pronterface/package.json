@@ -1,7 +1,7 @@
 {
   "name": "PrintInterface",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Desktop 3D printer controller",
   "author": "palle00",
   "repository": {

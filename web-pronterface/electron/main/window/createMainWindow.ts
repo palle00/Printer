@@ -15,6 +15,10 @@ function isSafeExternalUrl(value: string): boolean {
   }
 }
 
+function getWindowTitle(): string {
+  return `PrintInterface v${app.getVersion()}`;
+}
+
 function openExternalUrl(value: string): void {
   if (isSafeExternalUrl(value)) {
     void shell.openExternal(value);
@@ -40,7 +44,7 @@ export function createMainWindow(
   icon: NativeImage,
 ): BrowserWindow {
   const window = new BrowserWindow({
-    title: "PrintInterface",
+    title: getWindowTitle(),
     icon,
     width: 1500,
     height: 950,
@@ -68,6 +72,16 @@ export function createMainWindow(
   window.once("ready-to-show", () => {
     window.show();
   });
+
+  window.on(
+    "page-title-updated",
+    (event) => {
+      event.preventDefault();
+      window.setTitle(
+        getWindowTitle(),
+      );
+    },
+  );
 
   window.on("minimize", () => {
     setTimeout(() => {
