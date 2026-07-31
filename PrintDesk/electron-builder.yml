@@ -1,0 +1,56 @@
+appId: dk.patrick.PrintDeck
+productName: PrintDeck
+
+directories:
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+
+extraResources:
+  - from: resources/tray-icon.png
+    to: tray-icon.png
+
+asar: true
+
+asarUnpack:
+  - node_modules/@serialport/**/*
+  - node_modules/serialport/**/*
+
+fileAssociations:
+  - ext:
+      - gcode
+      - gco
+      - gc
+      - g
+    name: G-code file
+    description: 3D printer G-code
+    role: Editor
+
+compression: normal
+npmRebuild: true
+
+publish:
+  provider: github
+  owner: palle00
+  repo: Printer
+  releaseType: release
+
+win:
+  icon: resources/tray-icon.png
+  executableName: PrintDeck
+
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+  artifactName: "${productName}-${version}-${arch}-Setup.${ext}"
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: PrintDeck

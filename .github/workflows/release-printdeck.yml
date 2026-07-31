@@ -1,0 +1,96 @@
+name: Release PrintDeck
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build and publish
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        working-directory: PrintDesk
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: PrintDesk/package-lock.json
+
+      - name: Verify tag matches package version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $packageVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $tagVersion = $env:RELEASE_TAG.TrimStart("v")
+          if ($packageVersion -ne $tagVersion) {
+            throw "Tag $tagVersion does not match package version $packageVersion."
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Windows release
+        run: npm run build && npx electron-builder --win --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          $version = $env:RELEASE_TAG.TrimStart("v")
+          $artifacts = @(
+            "release/PrintDeck-$version-x64-Setup.exe",
+            "release/PrintDeck-$version-x64-Setup.exe.blockmap",
+            "release/latest.yml"
+          )
+
+          foreach ($artifact in $artifacts) {
+            if (-not (Test-Path $artifact)) {
+              throw "Missing release artifact: $artifact"
+            }
+          }
+
+          $releases = gh release list `
+            --limit 1000 `
+            --json tagName `
+            --repo $env:GITHUB_REPOSITORY | ConvertFrom-Json
+
+          if ($releases.tagName -contains $env:RELEASE_TAG) {
+            gh release upload $env:RELEASE_TAG $artifacts --clobber --repo $env:GITHUB_REPOSITORY
+          } else {
+            gh release create $env:RELEASE_TAG $artifacts `
+              --verify-tag `
+              --title $env:RELEASE_TAG `
+              --generate-notes `
+              --repo $env:GITHUB_REPOSITORY
+          }

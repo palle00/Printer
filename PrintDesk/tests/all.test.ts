@@ -1,0 +1,10 @@
+import "./comparison.test";
+import "./firmwareDetection.test";
+import "./gcodeFileSource.test";
+import "./gcodeParser.test";
+import "./objectCancellation.test";
+import "./positionTracker.test";
+import "./preflight.test";
+import "./printerState.test";
+import "./safeStop.test";
+import "./timing.test";
