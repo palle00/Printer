@@ -32,6 +32,8 @@ const TARGET_TOLERANCE_CELSIUS =
   2;
 
 export class NotificationService {
+  private readonly activeNotifications =
+    new Set<Notification>();
   private fileName: string | null =
     null;
   private activePrint = false;
@@ -278,12 +280,21 @@ export class NotificationService {
               quality: "best",
             }),
       });
+    this.activeNotifications.add(
+      notification,
+    );
     notification.on(
       "click",
       () => {
         this.options.showWindow();
+        notification.close();
       },
     );
+    notification.on("close", () => {
+      this.activeNotifications.delete(
+        notification,
+      );
+    });
     notification.show();
   }
 }

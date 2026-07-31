@@ -47,22 +47,31 @@ const monitoringServer = new LocalMonitoringServer();
 
 const WINDOWS_APP_USER_MODEL_ID =
   "dk.patrick.PrintDeck";
+const WINDOWS_DEVELOPMENT_APP_USER_MODEL_ID =
+  `${WINDOWS_APP_USER_MODEL_ID}.Development`;
 const sleepBlocker = new PrintSleepBlocker();
+
+app.setName("PrintDeck");
 
 if (process.platform === "win32") {
   app.setAppUserModelId(
-    WINDOWS_APP_USER_MODEL_ID,
+    app.isPackaged
+      ? WINDOWS_APP_USER_MODEL_ID
+      : WINDOWS_DEVELOPMENT_APP_USER_MODEL_ID,
   );
 }
 
 function getAppIconPath(): string {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, "tray-icon.png")
-    : path.join(
-        app.getAppPath(),
-        "resources",
-        "tray-icon.png",
-      );
+  const fileName =
+    process.platform === "win32"
+      ? "app-icon.ico"
+      : "app-icon.png";
+  return path.join(
+    app.isPackaged
+      ? process.resourcesPath
+      : path.join(app.getAppPath(), "resources"),
+    fileName,
+  );
 }
 
 function getAppIcon(): NativeImage {
@@ -186,7 +195,9 @@ function showMainWindow(): void {
   }
 
   mainWindow.show();
+  mainWindow.moveTop();
   mainWindow.focus();
+  mainWindow.webContents.focus();
 }
 
 function findGcodeArgument(argumentsList: readonly string[]): string | null {
@@ -218,12 +229,6 @@ if (!hasSingleInstanceLock) {
   });
 
   void app.whenReady().then(async () => {
-    if (process.platform === "win32") {
-      Notification.handleActivation(
-        showMainWindow,
-      );
-    }
-
     await migrateLegacySettings();
     settingsStore =
       new AppSettingsStore(
@@ -253,6 +258,11 @@ if (!hasSingleInstanceLock) {
       });
 
     createMainWindow();
+    if (process.platform === "win32") {
+      Notification.handleActivation(
+        showMainWindow,
+      );
+    }
     const initialFile = findGcodeArgument(process.argv);
     if (initialFile) requestGcodeOpen(initialFile);
     tray = createAppTray(

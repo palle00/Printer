@@ -70,6 +70,7 @@ export function createMainWindow(
     );
 
   window.once("ready-to-show", () => {
+    window.setIcon(icon);
     window.show();
   });
 
@@ -93,6 +94,7 @@ export function createMainWindow(
   });
 
   window.on("show", () => {
+    window.setIcon(icon);
     window.setSkipTaskbar(false);
   });
 

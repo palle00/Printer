@@ -20,11 +20,9 @@ export default function DashboardLayout({ controller }: DashboardLayoutProps) {
   return (
     <>
       <AppHeader
-        isTestMode={dashboard.isTestMode}
         connected={dashboard.printer.connected}
         hasActivePrint={dashboard.hasActivePrint}
         onToggleConnection={controller.toggleConnection}
-        onStopPrint={dashboard.stopPrint}
         onOpenNotifications={controller.openNotificationSettings}
         onOpenOperations={() => controller.openOperations("profiles")}
       />

@@ -1,23 +1,19 @@
 import { memo } from "react";
-import { Bell, Cable, Hexagon, Settings, Unplug, XOctagon } from "lucide-react";
+import { Bell, Cable, Hexagon, Settings, Unplug } from "lucide-react";
 
 interface AppHeaderProps {
-  isTestMode: boolean;
   connected: boolean;
   hasActivePrint: boolean;
   onToggleConnection: () => void | Promise<void>;
-  onStopPrint: () => void;
   onOpenNotifications:
     () => void;
   onOpenOperations: () => void;
 }
 
 function AppHeader({
-  isTestMode,
   connected,
   hasActivePrint,
   onToggleConnection,
-  onStopPrint,
   onOpenNotifications,
   onOpenOperations,
 }: AppHeaderProps) {
@@ -48,22 +44,6 @@ function AppHeader({
             ? "Disconnect"
             : "Connect USB"}
         </button>
-
-        {hasActivePrint && (
-          <button
-            type="button"
-            onClick={onStopPrint}
-            disabled={status === "stopping"}
-            className="flex items-center gap-2 rounded bg-red-600 px-3 py-2 text-xs font-bold text-white hover:bg-red-500 disabled:bg-red-950 disabled:text-red-800 disabled:cursor-not-allowed"
-          >
-            <XOctagon size={15} />
-            {status === "stopping"
-              ? "Stopping..."
-              : isTestMode
-                ? "Stop Test"
-                : "Stop Print"}
-          </button>
-        )}
       </div>
     </header>
   );

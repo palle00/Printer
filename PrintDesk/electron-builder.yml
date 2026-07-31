@@ -9,8 +9,10 @@ files:
   - package.json
 
 extraResources:
-  - from: resources/tray-icon.png
-    to: tray-icon.png
+  - from: resources/app-icon.png
+    to: app-icon.png
+  - from: resources/app-icon.ico
+    to: app-icon.ico
 
 asar: true
 
@@ -38,7 +40,7 @@ publish:
   releaseType: release
 
 win:
-  icon: resources/tray-icon.png
+  icon: resources/app-icon.ico
   executableName: PrintDeck
 
   target:
@@ -49,6 +51,8 @@ win:
   artifactName: "${productName}-${version}-${arch}-Setup.${ext}"
 
 nsis:
+  installerIcon: resources/app-icon.ico
+  uninstallerIcon: resources/app-icon.ico
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
