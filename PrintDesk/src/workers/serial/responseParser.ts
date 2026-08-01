@@ -1,6 +1,8 @@
 import type {
+  PrinterFault,
   PrinterPosition,
 } from "../../types/printer";
+import { parseMarlinResendRequest } from "./marlinProtocol";
 
 export interface ParsedTemperature {
   timestamp: number;
@@ -24,6 +26,34 @@ export interface ParsedPrinterResponse {
   position:
     | PrinterPosition
     | null;
+
+  resendLine: number | null;
+  fault: PrinterFault | null;
+}
+
+function parseFault(line: string): PrinterFault | null {
+  const normalized = line.toLowerCase();
+  const match = normalized.includes("thermal runaway")
+    ? ["thermal-runaway", "critical", "Thermal runaway detected"] as const
+    : normalized.includes("heating failed") || normalized.includes("heating error")
+      ? ["heating-failed", "critical", "Printer failed to reach temperature"] as const
+      : normalized.includes("filament runout") || normalized.includes("filament sensor triggered")
+        ? ["filament-runout", "warning", "Filament runout detected"] as const
+        : normalized.includes("homing failed") || normalized.includes("homing error")
+          ? ["homing-failed", "critical", "Printer homing failed"] as const
+          : normalized.includes("printer halted") || normalized.includes("kill() called") || normalized.startsWith("!!")
+            ? ["printer-killed", "critical", "Printer entered a halted state"] as const
+            : normalized.startsWith("error:")
+              ? ["firmware-error", "critical", line] as const
+              : null;
+  if (!match) return null;
+  return {
+    code: match[0],
+    severity: match[1],
+    message: match[2],
+    rawLine: line,
+    timestamp: Date.now(),
+  };
 }
 
 function parseAxisValue(
@@ -147,5 +177,8 @@ export function parsePrinterResponse(
         line,
         currentExtrusion,
       ),
+
+    resendLine: parseMarlinResendRequest(line),
+    fault: parseFault(line),
   };
 }

@@ -122,7 +122,12 @@ export function createMainWindow(
 
   if (!app.isPackaged && developmentUrl) {
     void window.loadURL(developmentUrl);
-    window.webContents.openDevTools({ mode: "detach" });
+
+    if (
+      process.env["PRINTDECK_OPEN_DEVTOOLS"] === "1"
+    ) {
+      window.webContents.openDevTools({ mode: "detach" });
+    }
   } else {
     void window.loadFile(
       path.join(__dirname, "../renderer/index.html"),

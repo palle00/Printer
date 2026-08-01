@@ -5,6 +5,7 @@ import type {
   PrinterPosition,
   PrinterStatus,
   PrinterEvent,
+  PrinterFault,
 } from "../../types/printer";
 
 interface PrinterEventTarget {
@@ -46,6 +47,14 @@ export class PrinterEvents {
           ? error.message
           : String(error),
     });
+  }
+
+  fault(fault: PrinterFault): void {
+    this.post({ type: "FIRMWARE_FAULT", fault });
+  }
+
+  reconnecting(attempt: number): void {
+    this.post({ type: "RECONNECTING", attempt });
   }
 
   connected(): void {

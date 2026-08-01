@@ -560,6 +560,20 @@ export class PrintSessionManager {
     );
   }
 
+  emergencyStop(): void {
+    this.clearPendingTestStop();
+    const session = this.session;
+    if (!session) return;
+    if (session.mode === "test") this.testRunner.clearTimer(session);
+    else clearRealProgressTimer(session);
+    session.stopRequested = true;
+    session.resumeResolver?.();
+    releaseSessionResources(session);
+    this.session = null;
+    this.options.positionTracker.reset();
+    this.options.events.printStopped(null, this.getIdleStatus(), true);
+  }
+
   private setSessionStatus(
     session: PrintSession,
     status: PrinterStatus,

@@ -1,4 +1,6 @@
 import "./comparison.test";
+import "./console.test";
+import "./fileValidation.test";
 import "./firmwareDetection.test";
 import "./gcodeFileSource.test";
 import "./gcodeParser.test";
@@ -6,5 +8,10 @@ import "./objectCancellation.test";
 import "./positionTracker.test";
 import "./preflight.test";
 import "./printerState.test";
+import "./printerValidation.test";
+import "./responseParser.test";
 import "./safeStop.test";
+import "./settingsParsing.test";
+import "./serialProtocol.test";
 import "./timing.test";
+import "./toolpath.test";

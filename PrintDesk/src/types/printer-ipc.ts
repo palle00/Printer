@@ -69,6 +69,9 @@ export const PRINTER_IPC = {
     stopPrint:
         "printer:stop-print",
 
+    emergencyStop:
+        "printer:emergency-stop",
+
     resetPrint:
         "printer:reset-print",
 
@@ -124,6 +127,7 @@ export interface PrinterApi {
     pausePrint(): Promise<void>;
     resumePrint(): Promise<void>;
     stopPrint(): Promise<void>;
+    emergencyStop(): Promise<void>;
     resetPrint(): Promise<void>;
     cancelObject(protocol: ObjectCancellationProtocol, objectId: string): Promise<void>;
 

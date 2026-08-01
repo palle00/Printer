@@ -9,6 +9,7 @@ import {
 import type {
   SerialTransport,
 } from "./SerialTransport";
+import { frameMarlinCommand } from "./marlinProtocol";
 
 const COMMAND_TIMEOUT_MS =
   15 * 60 * 1000;
@@ -22,6 +23,10 @@ interface PendingAcknowledgement {
 
   timeout:
     ReturnType<typeof setTimeout>;
+  command: string;
+  transmitted: string;
+  lineNumber: number | null;
+  resendCount: number;
 }
 
 type AcknowledgedCommandHandler = (
@@ -29,6 +34,9 @@ type AcknowledgedCommandHandler = (
 ) => void;
 
 export class SerialQueue {
+  private marlinChecksumsEnabled = false;
+  private nextLineNumber = 1;
+  private readonly replayBuffer = new Map<number, string>();
   private pending:
     PendingAcknowledgement | null =
       null;
@@ -113,6 +121,40 @@ export class SerialQueue {
     }
   }
 
+  async enableMarlinChecksums(): Promise<void> {
+    if (this.marlinChecksumsEnabled) return;
+    await this.queue("M110 N0", 5_000);
+    this.nextLineNumber = 1;
+    this.replayBuffer.clear();
+    this.marlinChecksumsEnabled = true;
+  }
+
+  disableMarlinChecksums(): void {
+    this.marlinChecksumsEnabled = false;
+    this.nextLineNumber = 1;
+    this.replayBuffer.clear();
+  }
+
+  async resend(lineNumber: number): Promise<boolean> {
+    const pending = this.pending;
+    if (!pending || pending.lineNumber !== lineNumber || pending.resendCount >= 3) {
+      return false;
+    }
+    const transmitted = this.replayBuffer.get(lineNumber);
+    if (!transmitted) return false;
+    pending.resendCount += 1;
+    this.events.terminalOut(`> [resend ${lineNumber}] ${pending.command}`);
+    await this.connection.write(transmitted);
+    return true;
+  }
+
+  async sendImmediate(command: string): Promise<void> {
+    const normalized = command.trim();
+    if (!normalized) return;
+    this.events.terminalOut(`> [immediate] ${normalized}`);
+    await this.connection.write(normalized);
+  }
+
   resolveAcknowledgement(): void {
     const pending = this.pending;
 
@@ -180,9 +222,18 @@ export class SerialQueue {
       );
     }
 
-    this.events.terminalOut(
-      `> ${command}`,
-    );
+    const lineNumber = this.marlinChecksumsEnabled ? this.nextLineNumber++ : null;
+    const transmitted = lineNumber === null ? command : frameMarlinCommand(lineNumber, command);
+    if (lineNumber !== null) {
+      this.replayBuffer.set(lineNumber, transmitted);
+      while (this.replayBuffer.size > 32) {
+        const oldest = this.replayBuffer.keys().next().value as number | undefined;
+        if (oldest === undefined) break;
+        this.replayBuffer.delete(oldest);
+      }
+    }
+
+    this.events.terminalOut(`> ${command}`);
 
     await new Promise<void>(
       (resolve, reject) => {
@@ -209,12 +260,16 @@ export class SerialQueue {
             },
             timeoutMs,
           ),
+          command,
+          transmitted,
+          lineNumber,
+          resendCount: 0,
         };
 
         this.pending = pending;
 
         void this.connection
-          .write(command)
+          .write(transmitted)
           .catch(
             (error: unknown) => {
               if (

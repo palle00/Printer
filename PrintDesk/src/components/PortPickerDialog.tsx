@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useRef,
   useState,
 } from "react";
 
@@ -9,6 +8,8 @@ import type {
   NativeSerialPortInfo,
 } from "../types/printer-ipc";
 import type { PrinterProfile } from "../types/operations";
+import { getErrorMessage } from "../utils/errors";
+import { useModalDialog } from "../hooks/useModalDialog";
 
 interface PortPickerDialogProps {
   open: boolean;
@@ -17,12 +18,6 @@ interface PortPickerDialogProps {
   profiles: PrinterProfile[];
   activeProfileId: string;
   onSelectProfile(profileId: string): void;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error
-    ? error.message
-    : String(error);
 }
 
 function getPortDescription(
@@ -52,8 +47,6 @@ export default function PortPickerDialog({
   activeProfileId,
   onSelectProfile,
 }: PortPickerDialogProps) {
-  const dialogRef =
-    useRef<HTMLElement>(null);
   const [ports, setPorts] =
     useState<NativeSerialPortInfo[]>([]);
   const [selectedPath, setSelectedPath] =
@@ -64,6 +57,7 @@ export default function PortPickerDialog({
     useState(false);
   const [error, setError] =
     useState<string | null>(null);
+  const dialogRef = useModalDialog<HTMLElement>(open, onClose, isConnecting);
 
   const refreshPorts = useCallback(async () => {
     setIsLoading(true);
@@ -102,28 +96,7 @@ export default function PortPickerDialog({
 
     setIsConnecting(false);
     void refreshPorts();
-    requestAnimationFrame(() => {
-      dialogRef.current?.focus();
-    });
   }, [open, refreshPorts]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape" && !isConnecting) {
-        onClose();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isConnecting, onClose, open]);
 
   if (!open) {
     return null;

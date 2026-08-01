@@ -42,6 +42,7 @@ export function registerPrinterIpc({
     PRINTER_IPC.pausePrint,
     PRINTER_IPC.resumePrint,
     PRINTER_IPC.stopPrint,
+    PRINTER_IPC.emergencyStop,
     PRINTER_IPC.resetPrint,
     PRINTER_IPC.cancelObject,
   ];
@@ -164,6 +165,11 @@ export function registerPrinterIpc({
   ipcMain.handle(PRINTER_IPC.stopPrint, (event) => {
     assertTrustedSender(event, getWindow());
     runtime.stopPrint();
+  });
+
+  ipcMain.handle(PRINTER_IPC.emergencyStop, async (event) => {
+    assertTrustedSender(event, getWindow());
+    await runtime.emergencyStop();
   });
 
   ipcMain.handle(PRINTER_IPC.resetPrint, (event) => {

@@ -30,6 +30,9 @@ import type {
 import {
   parseGcode,
 } from "../src/utils/gcodeParser";
+import {
+  buildToolpathData,
+} from "../src/components/gcode-viewer/toolpath";
 
 const LARGE_FIXTURE_PATH =
   path.join(
@@ -62,14 +65,14 @@ test(
 );
 
 test(
-  "large fixture keeps every preview path and aligns its compact command timeline",
+  "large fixture keeps every print path while bounding its GPU preview",
   {
     skip:
       !existsSync(
         LARGE_FIXTURE_PATH,
       ),
   },
-  () => {
+  async () => {
     const text = readFileSync(
       LARGE_FIXTURE_PATH,
       "utf8",
@@ -119,6 +122,36 @@ test(
     assert.equal(
       parsed.timing.totalSeconds,
       14_562,
+    );
+
+    const preview =
+      await buildToolpathData(
+        parsed,
+        new AbortController()
+          .signal,
+      );
+    const previewSegmentCount =
+      preview.positions.length / 6;
+
+    assert.equal(
+      preview.sourceSegmentCount,
+      1_333_927,
+    );
+    assert.ok(
+      previewSegmentCount <=
+        70_000,
+      `Expected a bounded preview mesh, received ${previewSegmentCount} segments.`,
+    );
+    assert.ok(
+      preview.positions.byteLength +
+        preview.commandIndexes.byteLength +
+        preview.categoryIndexes.byteLength <
+        16 * 1024 * 1024,
+      "Expected preview GPU attributes to stay below 16 MiB.",
+    );
+    assert.equal(
+      preview.layerVertexOffsets.at(-1),
+      previewSegmentCount * 2,
     );
   },
 );

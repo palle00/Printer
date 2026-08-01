@@ -4,6 +4,14 @@ import path from "node:path";
 const environment = { ...process.env };
 delete environment.ELECTRON_RUN_AS_NODE;
 
+if (process.argv.includes("--devtools")) {
+  environment.PRINTDECK_OPEN_DEVTOOLS = "1";
+}
+
+const electronViteCommand = process.argv.includes("--preview")
+  ? "preview"
+  : "dev";
+
 const cli = path.resolve(
   "node_modules",
   "electron-vite",
@@ -12,7 +20,7 @@ const cli = path.resolve(
 );
 const child = spawn(
   process.execPath,
-  [cli, "dev"],
+  [cli, electronViteCommand],
   {
     env: environment,
     stdio: "inherit",

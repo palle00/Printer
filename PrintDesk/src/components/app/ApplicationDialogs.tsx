@@ -41,6 +41,7 @@ export default function ApplicationDialogs({
         onSendMacro={dashboard.printer.sendGcode}
         onOpenQueued={dashboard.openRecentFile}
         onExportDiagnostics={() => window.desktop.settings.exportDiagnostics()}
+        onExportFailureReport={(reportId) => window.desktop.settings.exportFailureReport(reportId)}
       />
       <PrinterDetectionDialog
         review={controller.printerDetectionReview}

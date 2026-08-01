@@ -24,6 +24,22 @@ export interface PrintHistoryEntry {
   finishedAt: number;
   elapsedSeconds: number;
   profileId: string | null;
+  filamentUsedGrams: number | null;
+}
+
+export interface PrintFailureReport {
+  id: string;
+  fileName: string;
+  outcome: "stopped" | "disconnected" | "failed";
+  occurredAt: number;
+  elapsedSeconds: number;
+  commandIndex: number;
+  layer: number;
+  position: { x: number; y: number; z: number };
+  temperatures: { hotend: number; targetHotend: number; bed: number; targetBed: number };
+  message: string | null;
+  lastCommand: string | null;
+  terminalLines: string[];
 }
 
 export interface FilamentSpool {
@@ -85,6 +101,7 @@ export interface OperationsSettings {
   profiles: PrinterProfile[];
   activeProfileId: string;
   history: PrintHistoryEntry[];
+  failureReports: PrintFailureReport[];
   spools: FilamentSpool[];
   activeSpoolId: string | null;
   maintenance: MaintenanceTask[];
@@ -115,6 +132,7 @@ export const DEFAULT_OPERATIONS_SETTINGS: OperationsSettings = {
   profiles: [DEFAULT_PRINTER_PROFILE],
   activeProfileId: DEFAULT_PRINTER_PROFILE.id,
   history: [],
+  failureReports: [],
   spools: [],
   activeSpoolId: null,
   maintenance: [

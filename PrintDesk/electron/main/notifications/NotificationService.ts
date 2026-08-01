@@ -146,6 +146,15 @@ export class NotificationService {
         break;
       }
 
+      case "FIRMWARE_FAULT": {
+        this.notify(
+          "printerErrors",
+          event.fault.severity === "critical" ? "Critical printer fault" : "Printer warning",
+          event.fault.message,
+        );
+        break;
+      }
+
       case "TEMPERATURE": {
         this.updateHeater(
           "Hotend",

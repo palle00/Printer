@@ -33,6 +33,8 @@ export const DESKTOP_IPC = {
     "desktop:update-operations",
   exportDiagnostics:
     "desktop:export-diagnostics",
+  exportFailureReport:
+    "desktop:export-failure-report",
   openGcodeRequested:
     "desktop:open-gcode-requested",
 } as const;
@@ -72,4 +74,5 @@ export interface DesktopSettingsApi {
     operations: OperationsSettings,
   ): Promise<OperationsSettings>;
   exportDiagnostics(): Promise<string | null>;
+  exportFailureReport(reportId: string): Promise<string | null>;
 }

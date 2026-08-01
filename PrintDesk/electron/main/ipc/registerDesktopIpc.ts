@@ -145,6 +145,21 @@ export function registerDesktopIpc({
     return result.filePath;
   });
 
+  ipcMain.handle(DESKTOP_IPC.exportFailureReport, async (event, reportId: unknown) => {
+    const window = assertTrustedSender(event, getWindow());
+    if (typeof reportId !== "string") throw new Error("Invalid failure report.");
+    const report = settings.getSnapshot().operations.failureReports.find((item) => item.id === reportId);
+    if (!report) throw new Error("Failure report was not found.");
+    const result = await dialog.showSaveDialog(window, {
+      title: "Export print failure report",
+      defaultPath: `PrintDeck-failure-${new Date(report.occurredAt).toISOString().replaceAll(":", "-")}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return null;
+    await fs.writeFile(result.filePath, JSON.stringify(report, null, 2), "utf8");
+    return result.filePath;
+  });
+
   ipcMain.handle(
     DESKTOP_IPC.readGcodePath,
     (event, filePath: unknown) => {

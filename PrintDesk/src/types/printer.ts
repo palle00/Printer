@@ -64,6 +64,22 @@ export interface TemperatureSample {
   targetBed: number;
 }
 
+export type PrinterFaultCode =
+  | "thermal-runaway"
+  | "heating-failed"
+  | "filament-runout"
+  | "homing-failed"
+  | "printer-killed"
+  | "firmware-error";
+
+export interface PrinterFault {
+  code: PrinterFaultCode;
+  severity: "warning" | "critical";
+  message: string;
+  rawLine: string;
+  timestamp: number;
+}
+
 export interface PrinterState {
   connected: boolean;
 
@@ -81,6 +97,8 @@ export interface PrinterState {
 
   terminal: string[];
   error: string | null;
+  faults: PrinterFault[];
+  reconnecting: boolean;
 
   progress: PrintProgress;
   position: PrinterPosition;
@@ -132,6 +150,8 @@ export const initialPrinterState:
 
     terminal: [],
     error: null,
+    faults: [],
+    reconnecting: false,
 
     progress: {
       ...initialPrintProgress,
@@ -227,6 +247,14 @@ export type PrinterEvent =
   | {
       type: "ERROR";
       message: string;
+    }
+  | {
+      type: "FIRMWARE_FAULT";
+      fault: PrinterFault;
+    }
+  | {
+      type: "RECONNECTING";
+      attempt: number;
     }
   | {
       type: "OBJECT_CANCELLED";

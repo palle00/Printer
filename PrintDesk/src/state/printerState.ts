@@ -58,6 +58,7 @@ export function reducePrinterEvent(
         status: "idle",
         mode: null,
         error: null,
+        reconnecting: false,
       };
 
     case "DISCONNECTED":
@@ -66,6 +67,7 @@ export function reducePrinterEvent(
         connected: false,
         status: "disconnected",
         mode: null,
+        reconnecting: false,
       };
 
     case "STATUS":
@@ -181,6 +183,18 @@ export function reducePrinterEvent(
       return {
         ...state,
         error: event.message,
+      };
+
+    case "FIRMWARE_FAULT":
+      return {
+        ...state,
+        faults: appendBounded(state.faults, event.fault, 20),
+      };
+
+    case "RECONNECTING":
+      return {
+        ...state,
+        reconnecting: event.attempt > 0,
       };
 
     case "OBJECT_CANCELLED":

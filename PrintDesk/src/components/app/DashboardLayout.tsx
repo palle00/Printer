@@ -8,6 +8,7 @@ import PrinterInfoPanel from "../PrinterInfoPanel";
 import PrinterStatusPanel from "../PrinterStatusPanel";
 import TemperaturePanel from "../TemperaturePanel";
 import TerminalPanel from "../TerminalPanel";
+import FirmwareFaultPanel from "../FirmwareFaultPanel";
 import type { PrintDeckApplicationController } from "../../hooks/usePrintDeckApplication";
 
 interface DashboardLayoutProps {
@@ -75,9 +76,11 @@ export default function DashboardLayout({ controller }: DashboardLayoutProps) {
                 onPause={dashboard.pausePrint}
                 onResume={dashboard.resumePrint}
                 onStop={dashboard.stopPrint}
+                onEmergencyStop={dashboard.printer.emergencyStop}
                 onReset={dashboard.resetPrint}
                 preflightIssues={dashboard.preflightIssues}
                 activeProfile={dashboard.activeProfile}
+                activeSpool={operations.spools.find((spool) => spool.id === operations.activeSpoolId) ?? null}
                 cancelledObjectIds={dashboard.printer.cancelledObjectIds}
                 onCancelObject={dashboard.cancelObject}
               />
@@ -85,6 +88,7 @@ export default function DashboardLayout({ controller }: DashboardLayoutProps) {
           </section>
 
           <section className="app-column flex min-h-0 flex-col gap-3 overflow-y-auto">
+            <FirmwareFaultPanel faults={dashboard.printer.faults} reconnecting={dashboard.printer.reconnecting} onClear={dashboard.printer.clearFaults} />
             <PrinterStatusPanel
               profile={dashboard.activeProfile}
               connected={dashboard.printer.connected}

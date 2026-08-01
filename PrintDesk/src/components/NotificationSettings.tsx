@@ -13,6 +13,7 @@ import {
 import {
   getErrorMessage,
 } from "../utils/errors";
+import { useModalDialog } from "../hooks/useModalDialog";
 
 interface NotificationSettingsProps {
   open: boolean;
@@ -61,6 +62,7 @@ export default function NotificationSettings({
   open,
   onClose,
 }: NotificationSettingsProps) {
+  const dialogRef = useModalDialog<HTMLElement>(open, onClose);
   const [
     preferences,
     setPreferences,
@@ -212,6 +214,8 @@ export default function NotificationSettings({
       }}
     >
       <section
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="notification-settings-title"

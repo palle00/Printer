@@ -111,6 +111,9 @@ const settingsApi:
     exportDiagnostics() {
       return ipcRenderer.invoke(DESKTOP_IPC.exportDiagnostics);
     },
+    exportFailureReport(reportId: string) {
+      return ipcRenderer.invoke(DESKTOP_IPC.exportFailureReport, reportId);
+    },
   });
 
 const printerApi: PrinterApi =
@@ -189,6 +192,12 @@ const printerApi: PrinterApi =
     resetPrint(): Promise<void> {
       return ipcRenderer.invoke(
         PRINTER_IPC.resetPrint,
+      ) as Promise<void>;
+    },
+
+    emergencyStop(): Promise<void> {
+      return ipcRenderer.invoke(
+        PRINTER_IPC.emergencyStop,
       ) as Promise<void>;
     },
     cancelObject(protocol: ObjectCancellationProtocol, objectId: string): Promise<void> {

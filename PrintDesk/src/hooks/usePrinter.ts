@@ -170,6 +170,10 @@ export function usePrinter() {
     void window.desktop.printer.stopPrint().catch(reportError);
   }, [reportError]);
 
+  const emergencyStop = useCallback(() => {
+    void window.desktop.printer.emergencyStop().catch(reportError);
+  }, [reportError]);
+
   const resetPrint = useCallback(() => {
     void window.desktop.printer.resetPrint().catch(reportError);
   }, [reportError]);
@@ -189,6 +193,10 @@ export function usePrinter() {
     }));
   }, []);
 
+  const clearFaults = useCallback(() => {
+    setState((previous) => ({ ...previous, faults: [], error: null }));
+  }, []);
+
   return {
     ...state,
     isTestMode: state.mode === "test",
@@ -200,9 +208,11 @@ export function usePrinter() {
     pausePrint,
     resumePrint,
     stopPrint,
+    emergencyStop,
     resetPrint,
     cancelObject,
     clearTerminal,
     clearError,
+    clearFaults,
   };
 }

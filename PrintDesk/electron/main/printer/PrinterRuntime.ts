@@ -51,8 +51,16 @@ interface PrinterRuntimeOptions {
     ): void;
 }
 
+interface LastConnection {
+    path: string;
+    baudRate: number;
+    usbSerialNumber: string | null;
+}
+
 const POSITION_QUERY_TIMEOUT_MS =
     5_000;
+const RECONNECT_DELAY_MS = 2_000;
+const MAXIMUM_RECONNECT_ATTEMPTS = 15;
 
 function statusRequiresAwakeComputer(
     status: PrinterStatus,
@@ -86,6 +94,10 @@ export class PrinterRuntime {
 
     private disposed = false;
     private identificationLines: string[] | null = null;
+    private lastConnection: LastConnection | null = null;
+    private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private reconnectAttempts = 0;
+    private intentionalDisconnect = false;
 
     get isPrintActive():
         boolean {
@@ -190,30 +202,16 @@ export class PrinterRuntime {
             );
         }
 
-        await this.connection.connect({
-            path,
-            baudRate,
-        });
-
-        this.events.connected();
-
-        const detectedPrinter = await this.detectPrinter(usbSerialNumber);
-
-        /*
-         * Request the current position after
-         * connecting. M114 is optional.
-         */
-        void this.serialQueue
-            .queue(
-                "M114",
-                POSITION_QUERY_TIMEOUT_MS,
-            )
-            .catch(() => undefined);
-        return detectedPrinter;
+        this.cancelReconnect();
+        this.lastConnection = { path, baudRate, usbSerialNumber };
+        return this.openConnection(this.lastConnection);
     }
 
     async disconnect():
         Promise<void> {
+        this.intentionalDisconnect = true;
+        this.cancelReconnect();
+        this.lastConnection = null;
         this.prints.handleDisconnect();
 
         this.serialQueue.reset(
@@ -221,13 +219,14 @@ export class PrinterRuntime {
                 "Printer disconnected.",
             ),
         );
+        this.serialQueue.disableMarlinChecksums();
 
-        await this.connection
-            .disconnect();
-
-        this.events.disconnected(
-            false,
-        );
+        try {
+            await this.connection.disconnect();
+            this.events.disconnected(false);
+        } finally {
+            this.intentionalDisconnect = false;
+        }
     }
 
     async sendGcode(
@@ -304,6 +303,18 @@ export class PrinterRuntime {
         this.prints.stop();
     }
 
+    async emergencyStop(): Promise<void> {
+        if (!this.connection.connected) {
+            throw new Error("Emergency stop requires a connected printer.");
+        }
+        this.serialQueue.reset(new Error("Emergency stop activated."));
+        try {
+            await this.serialQueue.sendImmediate("M112");
+        } finally {
+            this.prints.emergencyStop();
+        }
+    }
+
     resetPrint(): void {
         this.prints.reset();
     }
@@ -322,6 +333,8 @@ export class PrinterRuntime {
         }
 
         this.disposed = true;
+        this.cancelReconnect();
+        this.lastConnection = null;
 
         this.temperaturePoller
             .dispose();
@@ -333,6 +346,7 @@ export class PrinterRuntime {
                 "Printer runtime disposed.",
             ),
         );
+        this.serialQueue.disableMarlinChecksums();
 
         await this.connection
             .disconnect()
@@ -386,6 +400,23 @@ export class PrinterRuntime {
                         );
                     }
 
+                    if (response.fault) {
+                        this.events.fault(response.fault);
+                    }
+
+                    if (response.resendLine !== null) {
+                        void this.serialQueue.resend(response.resendLine).then((handled) => {
+                            if (!handled) {
+                                this.serialQueue.rejectAcknowledgement(
+                                    new Error(`Printer requested unavailable line ${response.resendLine}.`),
+                                );
+                            }
+                        }).catch((error) => this.serialQueue.rejectAcknowledgement(
+                            error instanceof Error ? error : new Error(String(error)),
+                        ));
+                        return;
+                    }
+
                     if (response.error) {
                         this.serialQueue
                             .rejectAcknowledgement(
@@ -414,6 +445,7 @@ export class PrinterRuntime {
         this.connection
             .setDisconnectHandler(
                 (error) => {
+                    const reconnect = !this.disposed && !this.intentionalDisconnect && this.lastConnection !== null;
                     this.prints
                         .handleDisconnect();
 
@@ -423,6 +455,7 @@ export class PrinterRuntime {
                             "Printer disconnected.",
                         ),
                     );
+                    this.serialQueue.disableMarlinChecksums();
 
                     if (error) {
                         this.events.error(
@@ -434,6 +467,7 @@ export class PrinterRuntime {
                         .disconnected(
                             true,
                         );
+                    if (reconnect) this.scheduleReconnect();
                 },
             );
     }
@@ -487,5 +521,63 @@ export class PrinterRuntime {
         } finally {
             if (this.identificationLines === lines) this.identificationLines = null;
         }
+    }
+
+    private async openConnection(connection: LastConnection): Promise<DetectedPrinter | null> {
+        this.serialQueue.disableMarlinChecksums();
+        await this.connection.connect({ path: connection.path, baudRate: connection.baudRate });
+        this.events.connected();
+        const detected = await this.detectPrinter(connection.usbSerialNumber);
+        if (detected?.firmware === "marlin") {
+            await this.serialQueue.enableMarlinChecksums().catch((error) => {
+                this.events.error(error);
+                this.serialQueue.disableMarlinChecksums();
+            });
+        }
+        void this.serialQueue.queue("M114", POSITION_QUERY_TIMEOUT_MS).catch(() => undefined);
+        return detected;
+    }
+
+    private scheduleReconnect(): void {
+        if (this.reconnectTimer || !this.lastConnection) return;
+        if (this.reconnectAttempts >= MAXIMUM_RECONNECT_ATTEMPTS) {
+            this.events.reconnecting(0);
+            this.events.error(new Error("Automatic printer reconnection timed out."));
+            return;
+        }
+        const attempt = ++this.reconnectAttempts;
+        this.events.reconnecting(attempt);
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            void this.tryReconnect();
+        }, RECONNECT_DELAY_MS);
+    }
+
+    private async tryReconnect(): Promise<void> {
+        const previous = this.lastConnection;
+        if (!previous || this.disposed || this.intentionalDisconnect) return;
+        try {
+            const ports = await NativeSerialTransport.listPorts();
+            const match = previous.usbSerialNumber
+                ? ports.find((port) => port.serialNumber === previous.usbSerialNumber)
+                : ports.find((port) => port.path === previous.path);
+            if (!match) {
+                this.scheduleReconnect();
+                return;
+            }
+            const connection = { ...previous, path: match.path };
+            this.lastConnection = connection;
+            await this.openConnection(connection);
+            this.reconnectAttempts = 0;
+        } catch (error) {
+            this.events.error(error);
+            this.scheduleReconnect();
+        }
+    }
+
+    private cancelReconnect(): void {
+        if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+        this.reconnectAttempts = 0;
     }
 }

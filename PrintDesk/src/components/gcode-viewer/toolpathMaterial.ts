@@ -83,8 +83,7 @@ const FRAGMENT_SHADER = `
       printedColor,
       vPrinted
     );
-    float alpha = mix(0.72, 1.0, vPrinted);
-    gl_FragColor = vec4(color, alpha);
+    gl_FragColor = vec4(color, 1.0);
   }
 `;
 
@@ -151,7 +150,6 @@ export function createToolpathMaterial({
     fragmentShader:
       FRAGMENT_SHADER,
     uniforms,
-    transparent: true,
     depthWrite: true,
   });
 }

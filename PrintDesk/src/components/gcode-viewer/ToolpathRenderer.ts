@@ -27,7 +27,7 @@ export class ToolpathRenderer {
   private toolpathMaterial:
     THREE.ShaderMaterial | null =
       null;
-  private layerIndexOffsets:
+  private layerVertexOffsets:
     Uint32Array<ArrayBufferLike> =
       new Uint32Array(0);
   private previewLayer = 1;
@@ -88,10 +88,10 @@ export class ToolpathRenderer {
       return;
     }
 
-    this.layerIndexOffsets =
-      data.layerIndexOffsets;
+    this.layerVertexOffsets =
+      data.layerVertexOffsets;
 
-    if (data.indices.length > 0) {
+    if (data.positions.length > 0) {
       const geometry =
         new THREE.BufferGeometry();
       geometry.setAttribute(
@@ -99,12 +99,6 @@ export class ToolpathRenderer {
         new THREE.BufferAttribute(
           data.positions,
           3,
-        ),
-      );
-      geometry.setIndex(
-        new THREE.BufferAttribute(
-          data.indices,
-          1,
         ),
       );
       geometry.setAttribute(
@@ -230,12 +224,12 @@ export class ToolpathRenderer {
 
     const layer = Math.min(
       this.previewLayer,
-      this.layerIndexOffsets
+      this.layerVertexOffsets
         .length - 1,
     );
     const count =
       layer >= 0
-        ? this.layerIndexOffsets[
+        ? this.layerVertexOffsets[
             layer
           ]
         : 0;
@@ -250,7 +244,7 @@ export class ToolpathRenderer {
     );
     this.toolpathLines = null;
     this.toolpathMaterial = null;
-    this.layerIndexOffsets =
+    this.layerVertexOffsets =
       new Uint32Array(0);
   }
 
